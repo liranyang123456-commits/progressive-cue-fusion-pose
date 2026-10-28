@@ -1,0 +1,62 @@
+[
+  {
+    "name": "armadillo",
+    "source": "https://raw.githubusercontent.com/alecjacobson/common-3d-test-models/master/data/armadillo.obj",
+    "origin": "mirror",
+    "input_mesh": "<path>",
+    "simplified_ply": "<path>",
+    "triangles_input": 99976,
+    "triangles_simplified": 80000,
+    "vertices_input": 49990,
+    "bounding_radius": 100.26369438709162,
+    "extent_xyz": [
+      127.0146713256836,
+      151.3070411682129,
+      115.4109878540039
+    ],
+    "aspect_max_over_min": 1.3110280397185219,
+    "euler_characteristic": 2,
+    "genus_proxy": 0,
+    "watertight": true
+  },
+  {
+    "name": "happy",
+    "source": "https://raw.githubusercontent.com/alecjacobson/common-3d-test-models/master/data/happy.obj",
+    "origin": "mirror",
+    "input_mesh": "<path>",
+    "simplified_ply": "<path>",
+    "triangles_input": 98601,
+    "triangles_simplified": 79999,
+    "vertices_input": 49251,
+    "bounding_radius": 0.11103489939298397,
+    "extent_xyz": [
+      0.08131999894976616,
+      0.19802499562501907,
+      0.08139200136065483
+    ],
+    "aspect_max_over_min": 2.43513278630691,
+    "euler_characteristic": -53,
+    "genus_proxy": 28,
+    "watertight": false
+  },
+  {
+    "name": "lucy",
+    "source": "https://raw.githubusercontent.com/alecjacobson/common-3d-test-models/master/data/lucy.obj",
+    "origin": "mirror",
+    "input_mesh": "<path>",
+    "simplified_ply": "<path>",
+    "triangles_input": 99970,
+    "triangles_simplified": 80000,
+    "vertices_input": 49987,
+    "bounding_radius": 940.0511419588373,
+    "extent_xyz": [
+      930.1240234375,
+      533.7689971923828,
+      1597.2219848632812
+    ],
+    "aspect_max_over_min": 2.992346864026659,
+    "euler_characteristic": 2,
+    "genus_proxy": 0,
+    "watertight": true
+  }
+]

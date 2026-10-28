@@ -1,0 +1,9 @@
+torch>=2.4
+numpy>=1.26,<3
+opencv-python>=4.8
+open3d>=0.18
+scipy>=1.10
+matplotlib>=3.7
+trimesh>=4.0
+ninja
+git+https://github.com/NVlabs/nvdiffrast
