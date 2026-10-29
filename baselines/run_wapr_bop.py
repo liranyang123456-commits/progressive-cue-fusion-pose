@@ -39,7 +39,9 @@ DATASETS = {
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", required=True)
-    ap.add_argument("--mode", default="refine", choices=["refine", "full"])
+    ap.add_argument("--mode", default="refine", choices=["refine", "full", "refine-from-ours"],
+                    help="refine: from the exported T0 bins; full: WAPR's own 12-hypothesis estimator; "
+                         "refine-from-ours: from the proposed method's estimate in results.jsonl (hypothesis generator + learned refiner)")
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--max-frames", type=int, default=0)
     args = ap.parse_args()
@@ -55,7 +57,17 @@ def main() -> int:
     frames = sorted([d for d in root.iterdir() if d.is_dir() and (d / "protocol.json").exists()])
     if args.max_frames > 0:
         frames = frames[: args.max_frames]
-    out_path = root / f"baseline_wapr_{args.mode}.jsonl"
+    out_path = root / ("baseline_wapr_from_ours.jsonl" if args.mode == "refine-from-ours" else f"baseline_wapr_{args.mode}.jsonl")
+    ours_init: dict = {}
+    if args.mode == "refine-from-ours":
+        rp = root / "results.jsonl"
+        for line in rp.read_text(encoding="utf-8").splitlines():
+            try:
+                r0 = json.loads(line)
+                ours_init[r0["tag"]] = r0
+            except Exception:
+                pass
+        print(f"[wapr] {len(ours_init)} initial poses from the proposed method")
     done = set()
     if out_path.exists():
         for line in out_path.read_text(encoding="utf-8").splitlines():
@@ -113,7 +125,14 @@ def main() -> int:
                     f.write(json.dumps(rec) + "\n")
                 print(f"[{tag}] full: e_R={met['e_R_deg']:.1f} e_t={met['e_t_mm']:.1f} ADD(-S)={met['add_s_metric']:.1f} {dt:.2f}s", flush=True)
             else:
-                for init in proto["inits"]:
+                inits_run = proto["inits"]
+                if args.mode == "refine-from-ours":
+                    r0 = ours_init.get(tag)
+                    if r0 is None:
+                        print(f"[skip] {tag}: no estimate of the proposed method")
+                        continue
+                    inits_run = [{"bin": "ours", "R0": r0["R_est"], "t0": r0["t_est"], "rot_err_deg": float(r0["e_R_deg"])}]
+                for init in inits_run:
                     if (tag, str(init["bin"])) in done:
                         continue
                     T0 = np.eye(4, dtype=np.float32)
@@ -133,7 +152,7 @@ def main() -> int:
                     R_est, t_est = P[:3, :3], P[:3, 3] * 1000.0
                     met = compute_metrics(R_est, t_est, R_gt, t_gt, obs["K"], pts, info, syms)
                     rec = {"tag": tag, "dataset": ds, "scene_id": proto["scene_id"], "im_id": proto["im_id"], "obj_id": obj,
-                           "method": "wapr_refine", "bin": init["bin"], "init_rot_err_deg": init["rot_err_deg"],
+                           "method": "wapr_refine" if args.mode == "refine" else "ours_then_wapr", "bin": init["bin"], "init_rot_err_deg": init["rot_err_deg"],
                            "R_est": R_est.tolist(), "t_est": t_est.tolist(), "t_total_s": dt, **met}
                     with out_path.open("a", encoding="utf-8") as f:
                         f.write(json.dumps(rec) + "\n")
@@ -142,6 +161,17 @@ def main() -> int:
             import traceback
             traceback.print_exc()
             print(f"[error] {tag}: {e}", flush=True)
+            if args.mode == "full":
+                # the estimator raised (e.g. no usable depth inside the mask): count the frame as a failure
+                # instead of silently dropping it from the averages
+                rec = {"tag": tag, "dataset": ds, "scene_id": proto["scene_id"], "im_id": proto["im_id"], "obj_id": obj,
+                       "method": "wapr_full", "bin": "none", "init_rot_err_deg": None, "failed": True, "error": str(e)[:200],
+                       "R_est": None, "t_est": None, "t_total_s": time.perf_counter() - t0_all,
+                       "e_R_deg": 180.0, "e_t_mm": float("inf"), "add": float("inf"), "adds": float("inf"), "add_s_metric": float("inf"),
+                       "add_lt_0.1d": False, "mssd": float("inf"), "mspd": float("inf"), "ar_mssd": 0.0, "ar_mspd": 0.0,
+                       "diameter": float(info["diameter"]), "symmetric": len(syms) > 1}
+                with out_path.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(rec) + "\n")
     print(f"[done] {out_path}")
     return 0
 

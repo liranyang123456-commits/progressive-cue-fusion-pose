@@ -2,7 +2,7 @@
   "method": "ours_v10_noda",
   "dataset": "dragon",
   "num_gt": 50,
-  "started_at": "2026-10-28T08:59:21.203010+00:00",
+  "started_at": "2026-10-28T22:50:49.906583+00:00",
   "VAL_STRICT_NO_GT": "1",
   "VAL_RUN_PROFILE": "v10",
   "VAL_DETERMINISTIC": "1",

@@ -23,7 +23,7 @@ RUNS = ROOT / "benchmark_runs"
 OUT = ROOT / "manuscript" / "computational_visual_media" / "figures" / "exp"
 MESHES = [("bunny", "Bunny", 100), ("dragon", "Dragon", 100), ("armadillo", "Armadillo", 50), ("happy", "Happy Buddha", 50), ("lucy", "Lucy", 50)]
 BASELINES = [("grid_adam", "Grid+Adam"), ("rand_restart_adam", "RandRestart+Adam"), ("adam_dr", "Adam-DR")]
-TILE = 110  # tile height in px
+TILE = 130  # tile height in px
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 
 
@@ -60,8 +60,10 @@ def failure_mode(r: dict, r_mesh: float) -> str:
         return "ok"
     if dd > 0.25 * dgt:
         return "wrong shell"
-    if vde > 90:
+    if vde > 90 or eR > 120:
         return "flipped"
+    if eR > 30:
+        return "wrong basin"
     return "local min."
 
 
@@ -92,8 +94,14 @@ def read_tile(path: Path) -> np.ndarray:
 
 
 def label(tile: np.ndarray, text: str, color=(0, 0, 0)) -> np.ndarray:
-    bar = np.full((16, tile.shape[1], 3), 255, np.uint8)
-    cv2.putText(bar, text, (2, 12), FONT, 0.36, color, 1, cv2.LINE_AA)
+    """One or two text lines ('|' separates lines) under the tile, scaled to fit the tile width."""
+    lines = text.split("|")
+    bar = np.full((15 * len(lines) + 3, tile.shape[1], 3), 255, np.uint8)
+    for i, ln in enumerate(lines):
+        scale = 0.42
+        while scale > 0.25 and cv2.getTextSize(ln, FONT, scale, 1)[0][0] > tile.shape[1] - 4:
+            scale -= 0.02
+        cv2.putText(bar, ln, (2, 12 + 15 * i), FONT, scale, color, 1, cv2.LINE_AA)
     return np.vstack([tile, bar])
 
 
@@ -142,7 +150,7 @@ def gallery() -> bool:
             r = ours[t]
             eR = float(r["rot_err_deg"])
             ddr = abs(float(r["dist_err"])) / r_mesh if np.isfinite(r_mesh) and r_mesh > 0 else float("nan")
-            pair = hstack([label(read_tile(d / "gt_rgb.png"), "target"), label(read_tile(d / "best_rgb.png"), f"eR={eR:.2f} dd/r={ddr:.3f}")], gap=2)
+            pair = hstack([label(read_tile(d / "gt_rgb.png"), "target"), label(read_tile(d / "best_rgb.png"), f"eR={eR:.2f}|dd/r={ddr:.3f}")], gap=2)
             tiles.append(pair)
         row = hstack(tiles, gap=10)
         rows_img.append(vstack([header(f"{disp} (N={len(ours)}): views at the 10/40/70/95 % quantiles of e_R", row.shape[1]), row], gap=2))
@@ -173,16 +181,16 @@ def compare() -> bool:
             continue
         for t in picks:
             d0 = RUNS / f"{ds}_{n}gt" / "ours_v10" / t
-            tiles = [label(read_tile(d0 / "gt_rgb.png"), f"{disp} {t} target")]
+            tiles = [label(read_tile(d0 / "gt_rgb.png"), f"{disp} {t}|target")]
             r = ours[t]
             fm = failure_mode(r, r_mesh)
             col = (0, 128, 0) if fm == "ok" else (0, 0, 200)
-            tiles.append(label(read_tile(d0 / "best_rgb.png"), f"Proposed eR={float(r['rot_err_deg']):.1f} {fm}", col))
+            tiles.append(label(read_tile(d0 / "best_rgb.png"), f"Proposed|eR={float(r['rot_err_deg']):.1f}  {fm}", col))
             for m, mname in BASELINES:
                 rb = base[m][t]
                 fmb = failure_mode(rb, r_mesh)
                 colb = (0, 128, 0) if fmb == "ok" else (0, 0, 200)
-                tiles.append(label(read_tile(RUNS / f"{ds}_{n}gt" / m / t / "best_rgb.png"), f"{mname} eR={float(rb['rot_err_deg']):.1f} {fmb}", colb))
+                tiles.append(label(read_tile(RUNS / f"{ds}_{n}gt" / m / t / "best_rgb.png"), f"{mname}|eR={float(rb['rot_err_deg']):.1f}  {fmb}", colb))
             rows_img.append(hstack(tiles, gap=4))
     if not rows_img:
         return False

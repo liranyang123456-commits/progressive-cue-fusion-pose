@@ -121,7 +121,7 @@ def _max_abs_diff(a: dict[str, float], b: dict[str, float], cols: tuple[str, ...
 
 
 def run_pair(
-    *, dataset: str, method: str, num_gt: int, seed_a: int, seed_b: int, root: Path, strict: bool, force: bool
+    *, dataset: str, method: str, num_gt: int, seed_a: int, seed_b: int, root: Path, strict: bool, force: bool, repeat: bool = False
 ) -> dict:
     label = "strict" if strict else "legacy"
     pair_root = root / dataset / method / label
@@ -147,23 +147,38 @@ def run_pair(
         rc = _run(env_b, pair_root / "run_B.log")
         if rc != 0:
             return {"dataset": dataset, "method": method, "mode": label, "status": "run_B_failed", "rc": rc}
+    dir_a2 = pair_root / "A2"
+    if repeat and not (dir_a2 / "pose_metrics_summary.csv").exists():
+        # control run: identical labels AND identical observations as A -> any difference is run-to-run
+        # nondeterminism of the method itself (e.g. atomic adds in the rasteriser backward pass)
+        dir_a2.mkdir(parents=True, exist_ok=True)
+        _copy_observations(dir_a, dir_a2, num_gt)
+        env_a2 = _base_env(dataset, method, num_gt, dir_a2, strict)
+        env_a2["VAL_GT_POSE_SEED"] = str(seed_a)
+        env_a2["VAL_PRECOMPUTE_GT"] = "0"
+        rc = _run(env_a2, pair_root / "run_A2.log")
+        if rc != 0:
+            return {"dataset": dataset, "method": method, "mode": label, "status": "run_A2_failed", "rc": rc}
     elapsed = time.time() - t0
 
     ma, mb = _read_metrics(dir_a), _read_metrics(dir_b)
+    ma2 = _read_metrics(dir_a2) if (dir_a2 / "pose_metrics_summary.csv").exists() else {}
     per_tag = []
     for tag in _tags(num_gt):
         if tag not in ma or tag not in mb:
             per_tag.append({"tag": tag, "status": "missing"})
             continue
-        per_tag.append(
-            {
-                "tag": tag,
-                "est_diff_max": _max_abs_diff(ma[tag], mb[tag], EST_COLS),
-                "gt_diff_max": _max_abs_diff(ma[tag], mb[tag], GT_COLS),
-                "A": ma[tag],
-                "B": mb[tag],
-            }
-        )
+        row = {
+            "tag": tag,
+            "est_diff_max": _max_abs_diff(ma[tag], mb[tag], EST_COLS),
+            "gt_diff_max": _max_abs_diff(ma[tag], mb[tag], GT_COLS),
+            "A": ma[tag],
+            "B": mb[tag],
+        }
+        if tag in ma2:
+            row["repeat_diff_max"] = _max_abs_diff(ma[tag], ma2[tag], EST_COLS)
+            row["A2"] = ma2[tag]
+        per_tag.append(row)
     return {
         "dataset": dataset,
         "method": method,
@@ -171,6 +186,7 @@ def run_pair(
         "status": "ok",
         "elapsed_sec": elapsed,
         "per_tag": per_tag,
+        "has_repeat": bool(ma2),
     }
 
 
@@ -184,6 +200,7 @@ def main() -> int:
     ap.add_argument("--tol", type=float, default=1e-4, help="max allowed |est_A - est_B|")
     ap.add_argument("--root", default=str(ROOT / "leak_test_runs"))
     ap.add_argument("--legacy", action="store_true", help="also run the pair with VAL_STRICT_NO_GT=0")
+    ap.add_argument("--repeat", action="store_true", help="also repeat run A with identical labels (nondeterminism control)")
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
 
@@ -199,7 +216,7 @@ def main() -> int:
         for strict in modes:
             res = run_pair(
                 dataset=args.dataset, method=m, num_gt=args.num_gt, seed_a=args.seed_a, seed_b=args.seed_b,
-                root=root, strict=strict, force=args.force,
+                root=root, strict=strict, force=args.force, repeat=args.repeat,
             )
             results.append(res)
             label = res["mode"]
@@ -210,11 +227,24 @@ def main() -> int:
                 continue
             worst_est = max((t.get("est_diff_max", float('inf')) for t in res["per_tag"]), default=float("inf"))
             min_gt = min((t.get("gt_diff_max", 0.0) for t in res["per_tag"]), default=0.0)
-            verdict = "PASS" if (worst_est <= args.tol and min_gt > 1.0) else "FAIL"
-            if strict and verdict != "PASS":
+            rep = [t["repeat_diff_max"] for t in res["per_tag"] if "repeat_diff_max" in t]
+            worst_rep = max(rep) if rep else None
+            if worst_est <= args.tol and min_gt > 1.0:
+                verdict = "PASS (bitwise)"
+            elif worst_rep is not None and worst_rep > args.tol and min_gt > 1.0:
+                # the method is not bitwise reproducible even with identical labels: a label dependence can only
+                # be claimed if the label-swap difference exceeds the repeat difference by a clear margin
+                verdict = "PASS (within nondeterminism)" if worst_est <= 2.0 * worst_rep + args.tol else "FAIL"
+            else:
+                verdict = "FAIL"
+            res["verdict"] = verdict
+            res["worst_est_diff"] = worst_est
+            res["worst_repeat_diff"] = worst_rep
+            if strict and not verdict.startswith("PASS"):
                 all_ok = False
+            rep_txt = f"  max|est_A-est_A2|={worst_rep:.3e}" if worst_rep is not None else ""
             print(
-                f"[{label}] {args.dataset}/{m}: max|est_A-est_B|={worst_est:.3e}  "
+                f"[{label}] {args.dataset}/{m}: max|est_A-est_B|={worst_est:.3e}{rep_txt}  "
                 f"min|gt_A-gt_B|={min_gt:.2f}  -> {verdict if strict else 'documented leak' if worst_est > args.tol else 'no dependence'}"
             )
             for t in res["per_tag"]:

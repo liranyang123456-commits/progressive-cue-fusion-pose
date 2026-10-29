@@ -264,18 +264,25 @@ class VirtualObs:
     rgb: np.ndarray  # (S,S,3)
 
 
-def make_virtual_obs(fr: Frame, size: int = 192, fovy_deg: float = 40.0, pad: float = 1.6) -> VirtualObs:
+def make_virtual_obs(fr: Frame, size: int = 192, fovy_deg: float = 40.0, pad: float = 1.6,
+                     centre_uv: tuple[float, float] | None = None, fovy_fixed: float | None = None) -> VirtualObs:
+    """Virtual camera centred on the mask centroid (default) or on an explicit pixel `centre_uv` of the
+    original image; `fovy_fixed` keeps the field of view of a reference observation so that observations
+    built for different centres are directly comparable."""
     ys, xs = np.where(fr.mask)
     if len(xs) < 20:
         raise ValueError("mask too small")
-    uc, vc = float(xs.mean()), float(ys.mean())
+    if centre_uv is None:
+        uc, vc = float(xs.mean()), float(ys.mean())
+    else:
+        uc, vc = float(centre_uv[0]), float(centre_uv[1])
     K = fr.K
     ray = np.linalg.inv(K) @ np.array([uc, vc, 1.0])
     R_v = rotation_to_axis(ray)
     # virtual FOV: fit the mask extent with padding, but not below --fovy to keep the search scale similar
     ext = max(xs.max() - xs.min(), ys.max() - ys.min()) + 1
     fov_fit = 2 * math.degrees(math.atan(pad * 0.5 * ext / float(K[1, 1])))
-    fovy = max(min(fov_fit, 90.0), 10.0)
+    fovy = max(min(fov_fit, 90.0), 10.0) if fovy_fixed is None else float(fovy_fixed)
     f_v = (size / 2.0) / math.tan(math.radians(fovy) / 2.0)
     K_v = np.array([[f_v, 0, size / 2.0], [0, f_v, size / 2.0], [0, 0, 1.0]])
 
@@ -297,8 +304,10 @@ def make_virtual_obs(fr: Frame, size: int = 192, fovy_deg: float = 40.0, pad: fl
     P_v = P_c @ R_v.T
     depth_v = np.where((depth_src > 0) & mask_v, P_v[..., 2], 0.0).astype(np.float32)
     normals_v = normals_from_depth(depth_v, K_v) * mask_v[..., None]
-    return VirtualObs(R_v=R_v, K_v=K_v, size=size, fovy_deg=fovy, mask=mask_v.astype(np.float32),
+    obs = VirtualObs(R_v=R_v, K_v=K_v, size=size, fovy_deg=fovy, mask=mask_v.astype(np.float32),
                       depth=depth_v, normals=normals_v, rgb=rgb_v.astype(np.float32))
+    obs.centre_uv = (uc, vc)  # type: ignore[attr-defined]
+    return obs
 
 
 def rotate_obs(obs: VirtualObs, psi_deg: float) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -418,7 +427,7 @@ PIPE_ENV = {
 
 
 def run_method(mesh, mesh_r: float, obs: VirtualObs, device, out_dir: Path, *, roll_bins: int = 12,
-               beam_seeds: int = 8, verbose: bool = True) -> dict:
+               beam_seeds: int = 8, verbose: bool = True, fr=None, lateral: bool = True) -> dict:
     """Returns dict with est pose in the virtual camera (dist, elev, azim, psi) and timings."""
     for k, v in PIPE_ENV.items():
         os.environ[k] = v
@@ -493,56 +502,113 @@ def run_method(mesh, mesh_r: float, obs: VirtualObs, device, out_dir: Path, *, r
     results.sort(key=lambda x: x[0])
     best_l, best_d, best_e, best_a, best_psi = results[0]
 
-    # Final 1-degree roll sweep around the winning bin (geometry loss on the rotated observation)
-    half = 180.0 / roll_bins
-    best = (best_l, best_psi)
-    for dpsi in np.arange(-half, half + 1e-6, 1.0):
-        psi = best_psi + float(dpsi)
-        m, d, n, r = rotate_obs(obs, psi)
-        mt, dt, nt, rt = obs_to_pipeline(m, d, n, r, device)
-        ev = exp._evaluate_pose_loss_no_grad(mesh, sil_r, rast, mt, dt, nt, at, best_d, best_e, best_a, device)
-        l = float(ev["loss_total"])
-        if l < best[0]:
-            best = (l, psi)
-    best_l, best_psi = best
-
-    # Joint coordinate-descent polish over (elev, azim, roll) with the geometry loss
-    # (distance fixed): steps 3 -> 1.5 -> 0.75 deg, accept only strict improvements.
-    obs_cache2: dict[float, tuple] = {}
-
-    def _eval(e: float, a: float, psi: float) -> float:
-        key = round(psi, 3)
-        if key not in obs_cache2:
-            m, d, n, r = rotate_obs(obs, psi)
-            obs_cache2[key] = obs_to_pipeline(m, d, n, r, device)
-        mt, dt, nt, rt = obs_cache2[key]
-        ev = exp._evaluate_pose_loss_no_grad(mesh, sil_r, rast, mt, dt, nt, at, best_d, e, a, device)
-        return float(ev["loss_total"])
-
-    cur = [best_e, best_a, best_psi]
-    cur_l = _eval(*cur)
-    for step in (3.0, 1.5, 0.75):
-        for _ in range(4):
-            improved = False
-            for k in range(3):
-                for sgn in (+1.0, -1.0):
-                    cand = list(cur)
-                    cand[k] += sgn * step
-                    if k == 0:
-                        cand[0] = max(-89.0, min(89.0, cand[0]))
-                    l = _eval(*cand)
-                    if l < cur_l - 1e-9:
-                        cur, cur_l, improved = cand, l, True
-            if not improved:
-                break
-    best_e, best_a, best_psi = cur
-    best_l = cur_l
+    # Stage IV: roll sweep + angular / lateral / distance polish of the winning candidate
+    candidates = [{"loss": float(x[0]), "dist": float(x[1]), "elev": float(x[2]), "azim": float(x[3]), "psi": float(x[4])} for x in results]
+    obs_f, best_d, best_e, best_a, best_psi, best_l = polish_pose(fr, obs, mesh, sil_r, rast, device, best_d, best_e, best_a, best_psi,
+                                                                 roll_bins=roll_bins, lateral=lateral, verbose=verbose)
     t3 = exp._stage_now()
     return {
         "dist": best_d, "elev": best_e, "azim": best_a, "psi": best_psi, "loss": best_l,
         "t_global_s": t1 - t0, "t_local_s": t2 - t1, "t_roll_s": t3 - t2, "t_total_s": t3 - t0,
-        "n_seeds": len(chosen), "roll_bins": roll_bins,
+        "n_seeds": len(chosen), "roll_bins": roll_bins, "R_v": obs_f.R_v, "centre_uv": getattr(obs_f, "centre_uv", None),
+        "candidates": candidates,
     }
+
+
+def polish_pose(fr, obs: VirtualObs, mesh, sil_r, rast, device, d: float, e: float, a: float, psi: float, *,
+                roll_bins: int = 12, lateral: bool = True, verbose: bool = False) -> tuple[VirtualObs, float, float, float, float, float]:
+    """Stage IV on real data: (i) 1-degree roll sweep, (ii) coordinate descent over (elev, azim, roll) with the
+    geometry loss, (iii) coordinate descent over the two lateral degrees of freedom that the look-at
+    parametrisation lacks -- the direction of the virtual optical axis, i.e. the pixel of the original image on
+    which the virtual camera is centred -- interleaved with (ii) and a short distance line search.
+    No ground truth is used anywhere. Returns (obs, d, e, a, psi, loss) with obs re-centred on the final axis."""
+    at = torch.zeros(3, device=device)
+    half = 180.0 / roll_bins
+    cache: dict = {}
+
+    def _obs_tensors(o, ps):
+        key = (id(o), round(ps, 3))
+        if key not in cache:
+            m, dep, n, r = rotate_obs(o, ps)
+            cache[key] = obs_to_pipeline(m, dep, n, r, device)
+        return cache[key]
+
+    def _loss(o, dd, ee, aa, ps):
+        mt, dt, nt, _ = _obs_tensors(o, ps)
+        return float(exp._evaluate_pose_loss_no_grad(mesh, sil_r, rast, mt, dt, nt, at, dd, ee, aa, device)["loss_total"])
+
+    # (i) roll sweep
+    best = (_loss(obs, d, e, a, psi), psi)
+    for dpsi in np.arange(-half, half + 1e-6, 1.0):
+        ps = psi + float(dpsi)
+        l = _loss(obs, d, e, a, ps)
+        if l < best[0]:
+            best = (l, ps)
+    cur_l, psi = best
+
+    def _angular_descent(o, dd, ee, aa, ps, l0):
+        cur = [ee, aa, ps]
+        cur_l = l0
+        for step in (3.0, 1.5, 0.75):
+            for _ in range(4):
+                improved = False
+                for k in range(3):
+                    for sgn in (+1.0, -1.0):
+                        cand = list(cur)
+                        cand[k] += sgn * step
+                        if k == 0:
+                            cand[0] = max(-89.0, min(89.0, cand[0]))
+                        l = _loss(o, dd, cand[0], cand[1], cand[2])
+                        if l < cur_l - 1e-9:
+                            cur, cur_l, improved = cand, l, True
+                if not improved:
+                    break
+        return cur[0], cur[1], cur[2], cur_l
+
+    e, a, psi, cur_l = _angular_descent(obs, d, e, a, psi, cur_l)
+    if not lateral or fr is None:
+        return obs, d, e, a, psi, cur_l
+
+    # (iii) lateral DoF: move the virtual optical axis in original-image pixels; the camera position in the
+    # object frame is kept, only the look-at target changes (conversion through the original camera).
+    uc, vc = getattr(obs, "centre_uv", (None, None))
+    if uc is None:
+        return obs, d, e, a, psi, cur_l
+    for rnd in range(2):
+        moved = False
+        for step_px in (4.0, 2.0, 1.0):
+            for _ in range(4):
+                improved = False
+                for k in range(2):
+                    for sgn in (+1.0, -1.0):
+                        u2, v2 = (uc + sgn * step_px, vc) if k == 0 else (uc, vc + sgn * step_px)
+                        try:
+                            o2 = make_virtual_obs(fr, size=obs.size, centre_uv=(u2, v2), fovy_fixed=obs.fovy_deg)
+                        except Exception:
+                            continue
+                        R_c, t_c = pipeline_pose_to_cv(d, e, a, psi, obs.R_v, device)
+                        d2, e2, a2, psi2 = cv_pose_to_pipeline(R_c, t_c, o2.R_v, device)
+                        e2 = max(-89.0, min(89.0, e2))
+                        l = _loss(o2, d2, e2, a2, psi2)
+                        if l < cur_l - 1e-9:
+                            obs, d, e, a, psi, cur_l = o2, d2, e2, a2, psi2, l
+                            uc, vc = u2, v2
+                            improved, moved = True, True
+                if not improved:
+                    break
+        # distance line search (the depth hint is accurate to a few percent; keep it short)
+        for frac in (0.04, 0.02, 0.01):
+            for sgn in (+1.0, -1.0):
+                d2 = d * (1.0 + sgn * frac)
+                l = _loss(obs, d2, e, a, psi)
+                if l < cur_l - 1e-9:
+                    d, cur_l, moved = d2, l, True
+        e, a, psi, cur_l = _angular_descent(obs, d, e, a, psi, cur_l)
+        if not moved:
+            break
+    if verbose:
+        print(f"  [polish] centre -> ({uc:.1f},{vc:.1f}) px, d={d:.0f}, loss={cur_l:.3f}")
+    return obs, d, e, a, psi, cur_l
 
 
 def cv_pose_to_pipeline(R_orig: np.ndarray, t_orig: np.ndarray, R_v: np.ndarray, device) -> tuple[float, float, float, float]:
@@ -564,7 +630,7 @@ def cv_pose_to_pipeline(R_orig: np.ndarray, t_orig: np.ndarray, R_v: np.ndarray,
 
 
 def run_from_init(mesh, mesh_r: float, obs: VirtualObs, device, out_dir: Path, R0: np.ndarray, t0: np.ndarray, *,
-                  roll_bins: int = 12, verbose: bool = True) -> dict:
+                  roll_bins: int = 12, verbose: bool = True, fr=None, lateral: bool = True) -> dict:
     """Stages II-IV only (distance-aware LocalBeam coarse+fine, roll sweep, joint polish) from a given
     object-to-camera initial pose in the original BOP camera. Used for (i) the refiner-style protocol
     (same T0 bins as WAPR-refine / Diff-DOPE) and (ii) foundation-model initialisations."""
@@ -604,48 +670,14 @@ def run_from_init(mesh, mesh_r: float, obs: VirtualObs, device, out_dir: Path, R
     )
     best_l, best_d, best_e, best_a, best_psi = float(f_l), float(f_d), float(f_e), float(f_a), float(psi)
     t1s = exp._stage_now()
-    half = 180.0 / roll_bins
-    best = (best_l, best_psi)
-    for dpsi in np.arange(-half, half + 1e-6, 1.0):
-        ps = best_psi + float(dpsi)
-        m, d, n, r = rotate_obs(obs, ps)
-        mt, dt, nt, rt = obs_to_pipeline(m, d, n, r, device)
-        l = float(exp._evaluate_pose_loss_no_grad(mesh, sil_r, rast, mt, dt, nt, at, best_d, best_e, best_a, device)["loss_total"])
-        if l < best[0]:
-            best = (l, ps)
-    best_l, best_psi = best
-    obs_cache2: dict[float, tuple] = {}
-
-    def _eval(e: float, a: float, ps: float) -> float:
-        key = round(ps, 3)
-        if key not in obs_cache2:
-            m, d, n, r = rotate_obs(obs, ps)
-            obs_cache2[key] = obs_to_pipeline(m, d, n, r, device)
-        mt, dt, nt, rt = obs_cache2[key]
-        return float(exp._evaluate_pose_loss_no_grad(mesh, sil_r, rast, mt, dt, nt, at, best_d, e, a, device)["loss_total"])
-
-    cur = [best_e, best_a, best_psi]
-    cur_l = _eval(*cur)
-    for step in (3.0, 1.5, 0.75):
-        for _ in range(4):
-            improved = False
-            for k in range(3):
-                for sgn in (+1.0, -1.0):
-                    cand = list(cur)
-                    cand[k] += sgn * step
-                    if k == 0:
-                        cand[0] = max(-89.0, min(89.0, cand[0]))
-                    l = _eval(*cand)
-                    if l < cur_l - 1e-9:
-                        cur, cur_l, improved = cand, l, True
-            if not improved:
-                break
-    best_e, best_a, best_psi = cur
+    obs_f, best_d, best_e, best_a, best_psi, cur_l = polish_pose(fr, obs, mesh, sil_r, rast, device, best_d, best_e, best_a, best_psi,
+                                                                roll_bins=roll_bins, lateral=lateral, verbose=False)
     t2s = exp._stage_now()
     if verbose:
         print(f"  [init-refine] start (d={sd:.0f}, e={se:.1f}, a={sa:.1f}, psi={psi:.1f}) loss {l0:.3f} -> {cur_l:.3f}  {t2s - t0s:.1f}s")
     return {"dist": best_d, "elev": best_e, "azim": best_a, "psi": best_psi, "loss": float(cur_l), "loss_init": l0,
-            "t_global_s": 0.0, "t_local_s": t1s - t0s, "t_roll_s": t2s - t1s, "t_total_s": t2s - t0s, "n_seeds": 1, "roll_bins": roll_bins}
+            "t_global_s": 0.0, "t_local_s": t1s - t0s, "t_roll_s": t2s - t1s, "t_total_s": t2s - t0s, "n_seeds": 1, "roll_bins": roll_bins,
+            "R_v": obs_f.R_v, "centre_uv": getattr(obs_f, "centre_uv", None)}
 
 
 # --------------------------------------------------------------------------------------
@@ -737,6 +769,13 @@ def main() -> int:
     ap.add_argument("--export-only", action="store_true", help="only write observation/T0 packages for baselines")
     ap.add_argument("--sanity-gt", action="store_true", help="diagnostic: IoU of GT-pose splat vs observed mask")
     ap.add_argument("--max-frames", type=int, default=0)
+    ap.add_argument("--loss-scale", default="1",
+                    help="VAL_LOSS_SCALE for the geometry loss on sensor data. '1' (default) = per-pixel mean silhouette error, which puts "
+                         "silhouette, depth and normal terms on a comparable scale; 'auto' = silhouette error summed over the crop "
+                         "(the synthetic-benchmark configuration), under which the visible mask of an occluded object lets the beam "
+                         "drift to a farther shell (reported as an ablation)")
+    ap.add_argument("--out-suffix", default="", help="suffix appended to the results file name (e.g. _balanced)")
+    ap.add_argument("--no-lateral", action="store_true", help="disable the lateral (optical-axis) polish of stage IV")
     ap.add_argument("--from-export", action="store_true",
                     help="use the exported observation.npz/protocol.json packages in --out instead of the raw BOP test folders")
     ap.add_argument("--init-from", default="none", choices=["none", "bins", "vggt"],
@@ -766,7 +805,8 @@ def main() -> int:
     rng = np.random.default_rng(args.seed + 1)
     print(f"[{ds}] {len(frames)} frames, objects={objects}, rot bins={bins}")
 
-    results_path = out_root / ("results.jsonl" if args.init_from == "none" else f"results_init_{args.init_from}.jsonl")
+    PIPE_ENV["VAL_LOSS_SCALE"] = str(args.loss_scale)
+    results_path = out_root / (f"results{args.out_suffix}.jsonl" if args.init_from == "none" else f"results_init_{args.init_from}{args.out_suffix}.jsonl")
     vggt_inits: dict[str, dict] = {}
     if args.init_from == "vggt":
         vp = out_root / "baseline_vggt_init.jsonl"
@@ -863,16 +903,29 @@ def main() -> int:
             for init in init_list:
                 t_start = time.time()
                 if init is None:
-                    res = run_method(mesh_c, mesh_r, obs, device, fdir, roll_bins=args.roll_bins, beam_seeds=args.beam_seeds)
+                    res = run_method(mesh_c, mesh_r, obs, device, fdir, roll_bins=args.roll_bins, beam_seeds=args.beam_seeds,
+                                     fr=fr, lateral=not args.no_lateral)
                     method_name, bin_name, init_err = "ours_v10", "none", None
                 else:
                     bin_name, R0b, t0b, init_err = init
-                    res = run_from_init(mesh_c, mesh_r, obs, device, fdir / f"init_{bin_name}", R0b, t0b, roll_bins=args.roll_bins)
+                    res = run_from_init(mesh_c, mesh_r, obs, device, fdir / f"init_{bin_name}", R0b, t0b, roll_bins=args.roll_bins,
+                                        fr=fr, lateral=not args.no_lateral)
                     method_name = "ours_refine" if args.init_from == "bins" else "vggt+ours_refine"
-                R_est, t_est_c = pipeline_pose_to_cv(res["dist"], res["elev"], res["azim"], res["psi"], obs.R_v, device)
+                R_v_final = res.pop("R_v", obs.R_v)
+                R_est, t_est_c = pipeline_pose_to_cv(res["dist"], res["elev"], res["azim"], res["psi"], R_v_final, device)
                 met = compute_metrics(R_est, t_est_c, R_gt, t_gt_c, fr.K, pts - centre, info, syms)
+                cands = res.pop("candidates", None)
+                cand_err = None
+                if cands:
+                    cand_err = []
+                    for c in cands:
+                        Rc, tc = pipeline_pose_to_cv(c["dist"], c["elev"], c["azim"], c["psi"], obs.R_v, device)
+                        mc = compute_metrics(Rc, tc, R_gt, t_gt_c, fr.K, pts - centre, info, syms)
+                        cand_err.append({"loss": c["loss"], "e_R_deg": mc["e_R_deg"], "e_t_mm": mc["e_t_mm"]})
                 rec = {"dataset": ds, "scene_id": scene_id, "im_id": im_id, "obj_id": obj_id, "tag": tag, "method": method_name,
-                       "bin": bin_name, "init_rot_err_deg_this": init_err,
+                       "bin": bin_name, "init_rot_err_deg_this": init_err, "loss_scale": str(args.loss_scale), "lateral": not args.no_lateral,
+                       "centre_uv": [float(x) for x in res.pop("centre_uv")] if res.get("centre_uv") is not None else None,
+                       "candidates": cand_err,
                        "R_est": R_est.tolist(), "t_est": (t_est_c - R_est @ centre).tolist(), **met, **res,
                        "wall_s": time.time() - t_start,
                        "init_rot_err_deg": {i["bin"]: i["rot_err_deg"] for i in inits}}
