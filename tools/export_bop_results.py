@@ -208,7 +208,7 @@ def fminit_table(all_ds: dict[str, dict[str, list[dict]]]) -> str:
              "\\caption{Foundation-model initialisation. VGGT receives the real RGB crop and 12 rendered templates of the mesh with known "
              "poses; its predicted template cameras are aligned to the known ones by a similarity transform, which yields an object pose for "
              "the real frame (no mask, no depth). The pose is then refined by stages II--IV of the proposed method. "
-             "Same frames as Table~\\ref{tab:bop}.}",
+             "Same frames as Table~\\ref{tab:bop} of the main paper.}",
              "\\label{tab:bop_fminit}", "\\footnotesize", "\\setlength{\\tabcolsep}{3pt}",
              "\\begin{tabular}{@{}llcccccc@{}}", "\\toprule",
              "Dataset & Method & $N$ & med.\\ $e_R$ & SR@10$^\\circ$ & SR@30$^\\circ$ & ADD(-S)$<0.1d$ & s/frame \\\\", "\\midrule"]

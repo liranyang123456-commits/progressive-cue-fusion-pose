@@ -121,7 +121,8 @@ def _max_abs_diff(a: dict[str, float], b: dict[str, float], cols: tuple[str, ...
 
 
 def run_pair(
-    *, dataset: str, method: str, num_gt: int, seed_a: int, seed_b: int, root: Path, strict: bool, force: bool, repeat: bool = False
+    *, dataset: str, method: str, num_gt: int, seed_a: int, seed_b: int, root: Path, strict: bool, force: bool, repeat: bool = False,
+    repeats: int = 1
 ) -> dict:
     label = "strict" if strict else "legacy"
     pair_root = root / dataset / method / label
@@ -147,22 +148,30 @@ def run_pair(
         rc = _run(env_b, pair_root / "run_B.log")
         if rc != 0:
             return {"dataset": dataset, "method": method, "mode": label, "status": "run_B_failed", "rc": rc}
-    dir_a2 = pair_root / "A2"
-    if repeat and not (dir_a2 / "pose_metrics_summary.csv").exists():
-        # control run: identical labels AND identical observations as A -> any difference is run-to-run
-        # nondeterminism of the method itself (e.g. atomic adds in the rasteriser backward pass)
-        dir_a2.mkdir(parents=True, exist_ok=True)
-        _copy_observations(dir_a, dir_a2, num_gt)
-        env_a2 = _base_env(dataset, method, num_gt, dir_a2, strict)
-        env_a2["VAL_GT_POSE_SEED"] = str(seed_a)
-        env_a2["VAL_PRECOMPUTE_GT"] = "0"
-        rc = _run(env_a2, pair_root / "run_A2.log")
+    # control runs A2..A{k+1}: identical labels AND identical observations as A -> any difference is run-to-run
+    # nondeterminism of the method itself (e.g. atomic adds in the rasteriser backward pass). Several repeats
+    # bound that spread better than a single one.
+    rep_dirs = [pair_root / f"A{i}" for i in range(2, 2 + max(1, repeats))] if repeat else []
+    for dir_ai in rep_dirs:
+        if (dir_ai / "pose_metrics_summary.csv").exists():
+            continue
+        dir_ai.mkdir(parents=True, exist_ok=True)
+        _copy_observations(dir_a, dir_ai, num_gt)
+        env_ai = _base_env(dataset, method, num_gt, dir_ai, strict)
+        env_ai["VAL_GT_POSE_SEED"] = str(seed_a)
+        env_ai["VAL_PRECOMPUTE_GT"] = "0"
+        rc = _run(env_ai, pair_root / f"run_{dir_ai.name}.log")
         if rc != 0:
-            return {"dataset": dataset, "method": method, "mode": label, "status": "run_A2_failed", "rc": rc}
+            return {"dataset": dataset, "method": method, "mode": label, "status": f"run_{dir_ai.name}_failed", "rc": rc}
     elapsed = time.time() - t0
 
     ma, mb = _read_metrics(dir_a), _read_metrics(dir_b)
-    ma2 = _read_metrics(dir_a2) if (dir_a2 / "pose_metrics_summary.csv").exists() else {}
+    # all repeat runs that exist on disk (also from earlier invocations)
+    rep_metrics = []
+    for d in sorted(pair_root.glob("A[0-9]*")):
+        if (d / "pose_metrics_summary.csv").exists():
+            rep_metrics.append(_read_metrics(d))
+    ma2 = rep_metrics[0] if rep_metrics else {}
     per_tag = []
     for tag in _tags(num_gt):
         if tag not in ma or tag not in mb:
@@ -175,8 +184,10 @@ def run_pair(
             "A": ma[tag],
             "B": mb[tag],
         }
-        if tag in ma2:
-            row["repeat_diff_max"] = _max_abs_diff(ma[tag], ma2[tag], EST_COLS)
+        diffs = [_max_abs_diff(ma[tag], mr[tag], EST_COLS) for mr in rep_metrics if tag in mr]
+        if diffs:
+            row["repeat_diff_max"] = max(diffs)
+            row["repeat_diffs"] = diffs
             row["A2"] = ma2[tag]
         per_tag.append(row)
     return {
@@ -187,6 +198,7 @@ def run_pair(
         "elapsed_sec": elapsed,
         "per_tag": per_tag,
         "has_repeat": bool(ma2),
+        "n_repeats": len(rep_metrics),
     }
 
 
@@ -201,10 +213,13 @@ def main() -> int:
     ap.add_argument("--root", default=str(ROOT / "leak_test_runs"))
     ap.add_argument("--legacy", action="store_true", help="also run the pair with VAL_STRICT_NO_GT=0")
     ap.add_argument("--repeat", action="store_true", help="also repeat run A with identical labels (nondeterminism control)")
+    ap.add_argument("--repeats", type=int, default=1, help="number of identical-label repeat runs (A2..A{k+1}); implies --repeat")
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
 
     root = Path(args.root)
+    if args.repeats > 1:
+        args.repeat = True
     methods = [m.strip() for m in args.methods.split(",") if m.strip()]
     results = []
     all_ok = True
@@ -216,7 +231,7 @@ def main() -> int:
         for strict in modes:
             res = run_pair(
                 dataset=args.dataset, method=m, num_gt=args.num_gt, seed_a=args.seed_a, seed_b=args.seed_b,
-                root=root, strict=strict, force=args.force, repeat=args.repeat,
+                root=root, strict=strict, force=args.force, repeat=args.repeat, repeats=args.repeats,
             )
             results.append(res)
             label = res["mode"]
@@ -260,6 +275,15 @@ def main() -> int:
 
     out_json = root / f"leak_test_{args.dataset}.json"
     out_json.parent.mkdir(parents=True, exist_ok=True)
+    merged = []
+    if out_json.exists():
+        try:
+            done_keys = {(r["method"], r["mode"]) for r in results}
+            merged = [r for r in json.loads(out_json.read_text(encoding="utf-8")) if (r.get("method"), r.get("mode")) not in done_keys]
+        except Exception:
+            merged = []
+    order = {m: i for i, m in enumerate(METHODS)}
+    results = sorted(merged + results, key=lambda r: (order.get(r.get("method"), 99), r.get("mode") != "strict"))
     out_json.write_text(json.dumps(results, indent=2), encoding="utf-8")
     print(f"\n[report] {out_json}")
     print("[gate] " + ("PASS: no ground-truth dependence detected in strict mode." if all_ok else "FAIL: strict-mode estimates depend on GT labels."))

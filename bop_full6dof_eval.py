@@ -769,6 +769,7 @@ def main() -> int:
     ap.add_argument("--export-only", action="store_true", help="only write observation/T0 packages for baselines")
     ap.add_argument("--sanity-gt", action="store_true", help="diagnostic: IoU of GT-pose splat vs observed mask")
     ap.add_argument("--max-frames", type=int, default=0)
+    ap.add_argument("--frame-stride", type=int, default=1, help="keep every k-th exported frame (object-balanced subset for the costly bins protocol)")
     ap.add_argument("--loss-scale", default="1",
                     help="VAL_LOSS_SCALE for the geometry loss on sensor data. '1' (default) = per-pixel mean silhouette error, which puts "
                          "silhouette, depth and normal terms on a comparable scale; 'auto' = silhouette error summed over the crop "
@@ -799,6 +800,8 @@ def main() -> int:
             frames = [f for f in frames if f[2] in objects]
     else:
         frames = select_frames(ds, objects, args.frames_per_object, args.seed)
+    if args.frame_stride > 1:
+        frames = frames[:: args.frame_stride]
     if args.max_frames > 0:
         frames = frames[: args.max_frames]
     bins = [tuple(float(x) for x in b.split("-")) for b in args.rot_bins.split(",")]
