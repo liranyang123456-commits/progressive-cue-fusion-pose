@@ -4,7 +4,7 @@
     "method": "ours_v10",
     "mode": "strict",
     "status": "ok",
-    "elapsed_sec": 21996.742816209793,
+    "elapsed_sec": 0.0,
     "per_tag": [
       {
         "tag": "gt_00",
@@ -27,6 +27,9 @@
           "gt_azim_deg": -19.585379614809387
         },
         "repeat_diff_max": 0.0,
+        "repeat_diffs": [
+          0.0
+        ],
         "A2": {
           "est_dist": 0.15373146533966064,
           "est_elev_deg": 21.649225432913582,
@@ -57,6 +60,9 @@
           "gt_azim_deg": -58.98828672903314
         },
         "repeat_diff_max": 0.0,
+        "repeat_diffs": [
+          0.0
+        ],
         "A2": {
           "est_dist": 0.19410648941993713,
           "est_elev_deg": 23.12440456721106,
@@ -87,6 +93,9 @@
           "gt_azim_deg": 148.41118605996942
         },
         "repeat_diff_max": 0.0,
+        "repeat_diffs": [
+          0.0
+        ],
         "A2": {
           "est_dist": 0.33169540762901306,
           "est_elev_deg": 76.95244239716455,
@@ -98,6 +107,7 @@
       }
     ],
     "has_repeat": true,
+    "n_repeats": 1,
     "verdict": "PASS (bitwise)",
     "worst_est_diff": 0.0,
     "worst_repeat_diff": 0.0
@@ -107,7 +117,7 @@
     "method": "ours_v10",
     "mode": "legacy",
     "status": "ok",
-    "elapsed_sec": 16684.914758205414,
+    "elapsed_sec": 0.0,
     "per_tag": [
       {
         "tag": "gt_00",
@@ -130,6 +140,9 @@
           "gt_azim_deg": -19.585379614809387
         },
         "repeat_diff_max": 0.0,
+        "repeat_diffs": [
+          0.0
+        ],
         "A2": {
           "est_dist": 0.15373145043849945,
           "est_elev_deg": 21.60136288230472,
@@ -160,6 +173,9 @@
           "gt_azim_deg": -58.98828672903314
         },
         "repeat_diff_max": 0.0,
+        "repeat_diffs": [
+          0.0
+        ],
         "A2": {
           "est_dist": 0.19410648941993713,
           "est_elev_deg": 23.125599850315812,
@@ -190,6 +206,9 @@
           "gt_azim_deg": 148.41118605996942
         },
         "repeat_diff_max": 0.0,
+        "repeat_diffs": [
+          0.0
+        ],
         "A2": {
           "est_dist": 0.33169540762901306,
           "est_elev_deg": 77.11908535253453,
@@ -201,6 +220,7 @@
       }
     ],
     "has_repeat": true,
+    "n_repeats": 1,
     "verdict": "FAIL",
     "worst_est_diff": 0.22295786507673654,
     "worst_repeat_diff": 0.0
@@ -210,7 +230,7 @@
     "method": "grid_adam",
     "mode": "strict",
     "status": "ok",
-    "elapsed_sec": 267.4036045074463,
+    "elapsed_sec": 0.0,
     "per_tag": [
       {
         "tag": "gt_00",
@@ -232,7 +252,12 @@
           "gt_elev_deg": 23.346725517147682,
           "gt_azim_deg": -19.585379614809387
         },
-        "repeat_diff_max": 0.07752947726881132,
+        "repeat_diff_max": 0.5173595088717775,
+        "repeat_diffs": [
+          0.07752947726881132,
+          0.5173595088717775,
+          0.1328471793567303
+        ],
         "A2": {
           "est_dist": 0.12292055785655975,
           "est_elev_deg": 50.43730311462196,
@@ -263,6 +288,11 @@
           "gt_azim_deg": -58.98828672903314
         },
         "repeat_diff_max": 0.14102974598242213,
+        "repeat_diffs": [
+          0.14102974598242213,
+          0.08328732673913919,
+          0.13784687782921878
+        ],
         "A2": {
           "est_dist": 0.14739394187927246,
           "est_elev_deg": 22.589914943900883,
@@ -293,6 +323,11 @@
           "gt_azim_deg": 148.41118605996942
         },
         "repeat_diff_max": 0.007480764688455821,
+        "repeat_diffs": [
+          0.007480764688455821,
+          0.0014480001040624302,
+          0.0017485284275267077
+        ],
         "A2": {
           "est_dist": 0.29489439725875854,
           "est_elev_deg": 27.98148356714865,
@@ -304,16 +339,17 @@
       }
     ],
     "has_repeat": true,
-    "verdict": "FAIL",
+    "n_repeats": 3,
+    "verdict": "PASS (within nondeterminism)",
     "worst_est_diff": 0.4322690121917674,
-    "worst_repeat_diff": 0.14102974598242213
+    "worst_repeat_diff": 0.5173595088717775
   },
   {
     "dataset": "bunny",
     "method": "grid_adam",
     "mode": "legacy",
     "status": "ok",
-    "elapsed_sec": 182.61468625068665,
+    "elapsed_sec": 0.0,
     "per_tag": [
       {
         "tag": "gt_00",
@@ -336,6 +372,9 @@
           "gt_azim_deg": -19.585379614809387
         },
         "repeat_diff_max": 0.0,
+        "repeat_diffs": [
+          0.0
+        ],
         "A2": {
           "est_dist": 0.12389393150806427,
           "est_elev_deg": 13.847661273293605,
@@ -366,6 +405,9 @@
           "gt_azim_deg": -58.98828672903314
         },
         "repeat_diff_max": 0.014558548215880762,
+        "repeat_diffs": [
+          0.014558548215880762
+        ],
         "A2": {
           "est_dist": 0.18182024359703064,
           "est_elev_deg": 8.852108725670469,
@@ -396,6 +438,9 @@
           "gt_azim_deg": 148.41118605996942
         },
         "repeat_diff_max": 0.0,
+        "repeat_diffs": [
+          0.0
+        ],
         "A2": {
           "est_dist": 0.2661169171333313,
           "est_elev_deg": 74.99999867197056,
@@ -407,6 +452,7 @@
       }
     ],
     "has_repeat": true,
+    "n_repeats": 1,
     "verdict": "FAIL",
     "worst_est_diff": 143.83633218408406,
     "worst_repeat_diff": 0.014558548215880762
@@ -416,7 +462,7 @@
     "method": "rand_restart_adam",
     "mode": "strict",
     "status": "ok",
-    "elapsed_sec": 3370.9627220630646,
+    "elapsed_sec": 0.0010001659393310547,
     "per_tag": [
       {
         "tag": "gt_00",
@@ -439,6 +485,11 @@
           "gt_azim_deg": -19.585379614809387
         },
         "repeat_diff_max": 6.830189164475087e-06,
+        "repeat_diffs": [
+          6.830189164475087e-06,
+          0.0,
+          6.830189164475087e-06
+        ],
         "A2": {
           "est_dist": 0.1238005980849266,
           "est_elev_deg": 21.192050135913366,
@@ -469,6 +520,11 @@
           "gt_azim_deg": -58.98828672903314
         },
         "repeat_diff_max": 0.011204925333405669,
+        "repeat_diffs": [
+          0.011204925333405669,
+          0.010719981902333586,
+          0.0055187928493865
+        ],
         "A2": {
           "est_dist": 0.14742495119571686,
           "est_elev_deg": 22.357673144194816,
@@ -498,7 +554,12 @@
           "gt_elev_deg": 78.81558139896063,
           "gt_azim_deg": 148.41118605996942
         },
-        "repeat_diff_max": 0.0011952831047494783,
+        "repeat_diff_max": 0.0037292832868160986,
+        "repeat_diffs": [
+          0.0011952831047494783,
+          0.0037292832868160986,
+          0.0016255850224524693
+        ],
         "A2": {
           "est_dist": 0.29500076174736023,
           "est_elev_deg": 26.723629099409933,
@@ -510,6 +571,7 @@
       }
     ],
     "has_repeat": true,
+    "n_repeats": 3,
     "verdict": "PASS (within nondeterminism)",
     "worst_est_diff": 0.010981236638087921,
     "worst_repeat_diff": 0.011204925333405669
@@ -519,7 +581,7 @@
     "method": "rand_restart_adam",
     "mode": "legacy",
     "status": "ok",
-    "elapsed_sec": 4315.454004764557,
+    "elapsed_sec": 0.0,
     "per_tag": [
       {
         "tag": "gt_00",
@@ -542,6 +604,9 @@
           "gt_azim_deg": -19.585379614809387
         },
         "repeat_diff_max": 0.0,
+        "repeat_diffs": [
+          0.0
+        ],
         "A2": {
           "est_dist": 0.1238005980849266,
           "est_elev_deg": 21.192050135913366,
@@ -572,6 +637,9 @@
           "gt_azim_deg": -58.98828672903314
         },
         "repeat_diff_max": 0.009367604446673283,
+        "repeat_diffs": [
+          0.009367604446673283
+        ],
         "A2": {
           "est_dist": 0.1818295419216156,
           "est_elev_deg": 8.849111980172125,
@@ -602,6 +670,9 @@
           "gt_azim_deg": 148.41118605996942
         },
         "repeat_diff_max": 0.002117358642721001,
+        "repeat_diffs": [
+          0.002117358642721001
+        ],
         "A2": {
           "est_dist": 0.2950029671192169,
           "est_elev_deg": 28.24669468997837,
@@ -613,6 +684,7 @@
       }
     ],
     "has_repeat": true,
+    "n_repeats": 1,
     "verdict": "FAIL",
     "worst_est_diff": 139.54263621519308,
     "worst_repeat_diff": 0.009367604446673283

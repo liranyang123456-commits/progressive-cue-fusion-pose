@@ -2,7 +2,7 @@
   "method": "ours_v10_1shell",
   "dataset": "bunny",
   "num_gt": 20,
-  "started_at": "2026-10-30T00:56:28.014082+00:00",
+  "started_at": "2026-10-31T08:57:40.312056+00:00",
   "VAL_STRICT_NO_GT": "1",
   "VAL_RUN_PROFILE": "v10",
   "VAL_DETERMINISTIC": "1",
@@ -22,7 +22,9 @@
   "VAL_LOCAL_BEAM_FINAL_DR_ENABLE": "0",
   "VAL_SELECT_USE_VISUAL_SCORE": "1",
   "VAL_SIL_RENDER_MODE": "nvdiffrast_aa",
+  "VAL_MESH_SIMPLIFY": "0",
   "VAL_BASELINE_PIPELINE": "",
   "VAL_RAND_RADII_MULTS": "2.0",
-  "INPUT_MODEL_PATH": "<path>"
+  "INPUT_MODEL_PATH": "<path>",
+  "VAL_GT_TAGS": "gt_10,gt_11,gt_12,gt_13,gt_14,gt_15,gt_16,gt_17,gt_18,gt_19"
 }

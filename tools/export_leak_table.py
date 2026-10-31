@@ -50,8 +50,10 @@ def main() -> int:
             ea = sum(view_err(t["A"]) for t in tags) / max(len(tags), 1)
             eb = sum(view_err(t["B"]) for t in tags) / max(len(tags), 1)
             verdict = res.get("verdict")
-            if verdict is None:
-                verdict = "identical" if est <= 1e-4 else ("differs" if res["mode"] == "strict" else "documented leak")
+            if res["mode"] == "legacy":
+                verdict = "leak reproduced" if est > 1e-4 else "no dependence"
+            elif verdict is None:
+                verdict = "identical" if est <= 1e-4 else "differs"
             rows.append({"ds": ds, "m": res["method"], "mode": res["mode"], "est": est, "gt": gt, "rep": (max(rep) if rep else None),
                          "nrep": int(res.get("n_repeats", 1 if rep else 0)), "ea": ea, "eb": eb, "verdict": verdict})
             key = f"Leak{ds.capitalize()}{''.join(w.capitalize() for w in res['method'].replace('v10', 'ten').split('_'))}{res['mode'].capitalize()}"
@@ -70,7 +72,7 @@ def main() -> int:
          "$\\max|\\hat p_A-\\hat p_{A_i}|$: same between A and its repeats; $\\min|p^{\\mathrm{gt}}_A-p^{\\mathrm{gt}}_B|$: smallest label "
          "difference; $\\bar e_{\\mathrm{dir}}$: mean viewing-direction error of the estimate with respect to its own labels, under label set A / B. "
          "Verdict: bitwise = identical estimates; within nondeterminism = label-swap difference no larger than twice the largest repeat difference; "
-         "a legacy row whose estimates follow the labels documents the leak.}",
+         "a legacy row whose estimates follow the labels documents the leak (the proposed method moved by at most $0.2^\\circ$, the baselines by up to $144^\\circ$).}",
          "\\label{tab:leak_test}", "\\begin{tabular}{llllllcc}", "\\toprule",
          "Mesh & Method & Mode & $\\max|\\hat p_A-\\hat p_B|$ & $\\max|\\hat p_A-\\hat p_{A_i}|$ [$k$] & $\\min|p^{\\mathrm{gt}}_A-p^{\\mathrm{gt}}_B|$ & $\\bar e_{\\mathrm{dir}}$ A / B & verdict \\\\", "\\midrule"]
     for r in rows:
@@ -82,7 +84,9 @@ def main() -> int:
                  f"{r['ea']:.1f} / {r['eb']:.1f} & {r['verdict']} \\\\")
     L += ["\\bottomrule", "\\end{tabular}", "\\end{table}"]
     (MAN / "tables").mkdir(exist_ok=True)
-    (MAN / "tables" / "tab_leak_test.tex").write_text("\n".join(L) + "\n", encoding="utf-8")
+    tex = ("\n".join(L) + "\n").replace("\\begin{tabular}", "\\begin{adjustbox}{max width=\\linewidth}\n\\begin{tabular}", 1)\
+                                     .replace("\\end{tabular}", "\\end{tabular}\n\\end{adjustbox}", 1)
+    (MAN / "tables" / "tab_leak_test.tex").write_text(tex, encoding="utf-8")
     (MAN / "leak_macros.tex").write_text("\n".join(macros) + "\n", encoding="utf-8")
     for r in rows:
         print({k: (round(v, 3) if isinstance(v, float) else v) for k, v in r.items()})

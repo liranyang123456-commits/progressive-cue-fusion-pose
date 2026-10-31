@@ -64,10 +64,39 @@ def fill_partial(runs: Path, ds: str, n: int, method: str) -> None:
     print(f"[partial] {ds}/{method}: {rows} finished rows, {k} cache files filled in, cache complete={complete(out, n)}")
 
 
+def restore_from_sibling(runs: Path, ds: str, n: int, siblings=("grid_adam", "adam_dr", "rand_restart_adam")) -> bool:
+    """Rebuild <ds>_<n>gt/ours_v10 (the reference observation cache) from the cache copies inside a baseline run."""
+    dst = runs / f"{ds}_{n}gt" / "ours_v10"
+    if complete(dst, n):
+        print(f"[cache] {ds} N={n} reference cache present")
+        return True
+    for sib in siblings:
+        src = runs / f"{ds}_{n}gt" / sib
+        if not complete(src, n):
+            continue
+        dst.mkdir(parents=True, exist_ok=True)
+        for i in range(n):
+            (dst / tag(i)).mkdir(exist_ok=True)
+            for f in CACHE_FILES:
+                if (src / tag(i) / f).exists():
+                    shutil.copy2(src / tag(i) / f, dst / tag(i) / f)
+        for f in ("gt_poses.csv", "gt_poses_pose4x4.npy"):
+            if (src / f).exists():
+                shutil.copy2(src / f, dst / f)
+        print(f"[cache] {ds} N={n} reference cache restored from {sib}: {complete(dst, n)}")
+        return complete(dst, n)
+    print(f"[cache] {ds} N={n}: no complete sibling cache found")
+    return False
+
+
 def main() -> int:
     runs = Path(sys.argv[1]) / "benchmark_runs"
     ok = derive(runs, "bunny", 20, 100) and derive(runs, "dragon", 20, 100)
     fill_partial(runs, "bunny", 20, "ours_v10_1shell")
+    if restore_from_sibling(runs, "lucy", 50):
+        fill_partial(runs, "lucy", 50, "ours_v10")
+    else:
+        ok = False
     return 0 if ok else 1
 
 
