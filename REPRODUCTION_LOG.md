@@ -69,6 +69,13 @@ python bop_full6dof_eval.py --dataset <ds> --from-export --init-from vggt --out 
 python baselines/run_pi3_init.py --root bop6dof_results/<ds>
 python bop_full6dof_eval.py --dataset <ds> --from-export --init-from pi3 --out bop6dof_results/<ds>
 python bop_full6dof_eval.py --dataset lmo --from-export --occlusion-aware --out bop6dof_results/lmo       # ablation row
+# WAPR and Diff-DOPE on the synthetic benchmark (same observations as every method of Tables 1-2)
+python tools/export_synth_frames.py                              # GL world-to-view -> OpenCV, mesh re-centred and scaled to r = 100 mm, fixed initial camera as T0
+python baselines/run_wapr_synth.py --mesh <mesh> --sanity        # from the ground truth (convention check)
+python baselines/run_wapr_synth.py --mesh <mesh> --mode full     # 12 hypotheses, no initial pose
+python baselines/run_wapr_synth.py --mesh <mesh> --mode refine   # from the fixed initial camera
+python baselines/run_diffdope_synth.py --mesh <mesh>             # from the fixed initial camera (published hyper-parameters)
+python baselines/run_diffdope_synth.py --mesh <mesh> --sanity    # from the ground truth
 # SCFlow2 (CUDA 11 worker; tools/scflow2_port/README.md)
 python tools/make_scflow2_data.py                                   # -> external/scflow2_data (BOP layout, image lists, initial_poses/ours_bin*, configs)
 #   worker: scflow2_step1..5.cmd, install the two shims, patch_scflow2_windows.py <checkout>, scflow2_run.cmd
@@ -88,5 +95,10 @@ python tools/make_qualitative_figures.py
   One T-LESS run initially failed because the DINOv2 hub download was interrupted (`RemoteDisconnected`);
   it was re-run with `TORCH_HOME` pointing at the pre-populated hub cache. The time column of SCFlow2 is
   therefore measured on a different GPU than all other BOP rows and is marked as not comparable.
+* WAPR / Diff-DOPE on the synthetic benchmark (11-02): the exporter checks every view by projecting the mesh with the
+  ground-truth pose into the silhouette (>= 96% of the vertices inside) and verifies the reconstructed initial camera
+  against the saved one; mask = (alpha > 0.5) & (depth > 0) so that silhouette and depth agree at anti-aliased edges.
+  From the ground truth WAPR stays within 10 deg on (nearly) every view; Diff-DOPE is unstable on close-ups (d/r < 2),
+  independently of the chosen metric scale (r = 100 / 300 / 1000 mm tried on 8 Bunny views), so r = 100 mm is used for both.
 * pi3 initialisation: LM-O / LM / T-LESS, 12 rendered templates + real crop, float16; refined with stages II-IV
   (`results_init_pi3.jsonl`).

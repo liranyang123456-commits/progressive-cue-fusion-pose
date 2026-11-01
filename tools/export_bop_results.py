@@ -245,14 +245,14 @@ def bop_table_compact(all_ds: dict[str, dict[str, list[dict]]]) -> str:
              "Initialisation-free methods receive only mask, depth and RGB; refiners start from the same perturbed poses $T_0$ in four "
              "rotation-error bins ($15$--$30$, $30$--$60$, $60$--$90$, $90$--$180^\\circ$). "
              "SR@$10^\\circ$ in \\% with the rotation error taken as the minimum over the object's symmetry transforms of \\texttt{models\\_info.json} "
-             "(identity for asymmetric objects; raw value in brackets for the initialisation-free rows), for refiners per bin; "
+             "(identity for asymmetric objects; raw value in brackets for the initialisation-free rows); refiners started from $T_0$ "
+             "give it per bin ($15$--$30$ / $30$--$60$ / $60$--$90$ / $90$--$180^\\circ$); "
              "ADD(-S)$<0.1d$ recall over all frames (refiners: all bins); "
              "AR$_{\\mathrm{MSSD}}$: BOP average recall; s: median seconds per frame (shared RTX~5090; SCFlow2 on an RTX~2080\\,Ti, "
-             "not comparable). The complete table with medians, "
-             "confidence intervals and MSPD is Supplementary Table~S7.}",
-             "\\label{tab:bop}", "\\footnotesize", "\\setlength{\\tabcolsep}{3pt}",
-             "\\begin{tabular}{@{}llcccc@{}}", "\\toprule",
-             "Dataset & Method & SR@10$^\\circ$ sym.\\ (per $T_0$ bin) & ADD(-S) & AR$_{\\mathrm{MSSD}}$ & s \\\\"]
+             "not comparable). Supplementary Table~S7 adds medians, confidence intervals, MSPD and the ablation and oracle rows.}",
+             "\\label{tab:bop}", "\\normalsize", "\\setlength{\\tabcolsep}{3pt}",
+             "\\begin{tabular}{@{}lcccc@{}}", "\\toprule",
+             "Method & SR@10$^\\circ$ sym. & ADD(-S) & AR$_{\\mathrm{MSSD}}$ & s \\\\"]
     any_row = False
     for ds, disp in DATASETS:
         g = all_ds.get(ds, {})
@@ -274,21 +274,16 @@ def bop_table_compact(all_ds: dict[str, dict[str, list[dict]]]) -> str:
             if s:
                 block.append(f"{name} & {' / '.join(cells)} & {pct(s['add01'])} & {s['ar_mssd']:.2f} & {ftime(s['t_median'])} \\\\")
 
-        one("\\textbf{Proposed (I--IV, no $T_0$)}", "ours_full")
-        one("\\quad synthetic loss scaling", "ours_full_unbal")
-        one("\\quad occlusion-aware silhouette term", "ours_full_occ")
-        o = oracle_summary(g.get("ours_full", []))
-        if o:
-            block.append(f"\\quad oracle among retained candidates (raw) & ({pct(o['sr10'])}) & -- & -- & -- \\\\")
-        one("Proposed I--III $\\rightarrow$ WAPR refine", "ours_wapr")
-        one("WAPR 12 hyp.\\ + refine (no $T_0$)", "wapr_full")
-        bins("Proposed II--IV from $T_0$", "ours_refine")
-        bins("WAPR refine from $T_0$", "wapr_refine")
-        bins("SCFlow2 from $T_0$", "scflow2")
-        bins("Diff-DOPE from $T_0$", "diffdope")
+        one("\\textbf{Proposed, no $T_0$}", "ours_full")
+        one("Proposed I--III $\\rightarrow$ WAPR", "ours_wapr")
+        one("WAPR 12 hyp., no $T_0$", "wapr_full")
+        bins("Proposed II--IV, $T_0$", "ours_refine")
+        bins("WAPR refine, $T_0$", "wapr_refine")
+        bins("SCFlow2, $T_0$", "scflow2")
+        bins("Diff-DOPE, $T_0$", "diffdope")
         if block:
             any_row = True
-            lines += ["\\midrule"] + [f"\\multirow{{{len(block)}}}{{*}}{{{disp}}} & " + block[0]] + ["& " + b for b in block[1:]]
+            lines += ["\\midrule", f"\\multicolumn{{5}}{{@{{}}l}}{{\\textit{{{disp}}}}} \\\\"] + block
     lines += ["\\bottomrule", "\\end{tabular}", "\\end{table}"]
     return ("\n".join(lines) + "\n") if any_row else ""
 

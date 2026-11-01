@@ -37,6 +37,10 @@ python tools/derive_geom_only.py --run-root benchmark_runs/bunny_100gt   # Geom-
 python tools/export_revision_results.py                   # tables/*.tex, results_macros.tex, binned-SR figure
 python tools/make_qualitative_figures.py
 python tools/test_no_gt_leak.py --dataset bunny --methods ours_v10,grid_adam,rand_restart_adam --num-gt 3 --legacy
+# recent methods on exactly the same observations (640x480 RGB, metric depth, silhouette; mesh scaled to r = 100 mm)
+python tools/export_synth_frames.py                              # synth_frames/<mesh>/gt_XX/{observation.npz, protocol.json}
+python baselines/run_wapr_synth.py --mesh bunny --mode full      # WAPR environment; --mode refine, --sanity (from the ground truth)
+python baselines/run_diffdope_synth.py --mesh bunny              # Diff-DOPE from the fixed initial camera; --sanity
 ```
 
 ## Reproducing the BOP evaluation
