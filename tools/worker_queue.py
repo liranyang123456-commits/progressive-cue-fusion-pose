@@ -3,7 +3,7 @@
 """
 Sequential benchmark queue for a GPU worker that received tools/make_worker_bundle.py output.
 
-  python worker_queue.py --root C:/Users/Administrator/pose_bench --python C:/Users/Administrator/venvs/pose/Scripts/python.exe \
+  python worker_queue.py --root %USERPROFILE%/pose_bench --python %USERPROFILE%/venvs/pose/Scripts/python.exe \
          --jobs bunny:grid_adam:100,bunny:adam_dr:100,...
 
 Each job runs run_benchmark_compare.py (resumable: finished GT views are skipped) with the strict no-GT
