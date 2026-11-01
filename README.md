@@ -1,6 +1,6 @@
 # Known-geometry camera pose estimation via progressive cue fusion -- code and results
 
-Anonymised release accompanying the revised manuscript (Pattern Recognition, PR-D-26-09325).
+Code and results accompanying the revised manuscript *Known Geometry Camera Pose Refinement via Progressive Cue Fusion* (Pattern Recognition, PR-D-26-09325).
 Everything needed to regenerate every table and figure of the paper from the raw per-view
 outputs is included; the GPU runs themselves can be reproduced with the commands below.
 
