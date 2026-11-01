@@ -2,7 +2,7 @@
   "method": "hybrid_dr",
   "dataset": "armadillo",
   "num_gt": 50,
-  "started_at": "2026-10-29T21:27:39.050859+00:00",
+  "started_at": "2026-11-01T13:04:30.257102+00:00",
   "VAL_STRICT_NO_GT": "1",
   "VAL_RUN_PROFILE": "v9",
   "VAL_DETERMINISTIC": "1",
@@ -27,5 +27,6 @@
   "VAL_GREEDY_WARMUP_ITERS": "120",
   "VAL_REFINE_MAX_ITERS": "400",
   "VAL_REFINE_LR": "0.01",
-  "INPUT_MODEL_PATH": "<path>"
+  "INPUT_MODEL_PATH": "<path>",
+  "VAL_GT_TAGS": "gt_49"
 }

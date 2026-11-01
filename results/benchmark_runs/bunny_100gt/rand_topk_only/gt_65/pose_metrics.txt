@@ -1,0 +1,15 @@
+tag: gt_65
+=== Pose Metrics (est vs gt) ===
+rotation_error_deg: 97.332994
+camera_center_error: 0.469634
+view_direction_error_deg: 86.316489
+
+=== Spherical around at_xyz ===
+gt:  dist=0.336591, elev_deg=36.122470, azim_deg=-33.323404
+est: dist=0.349847, elev_deg=13.431207, azim_deg=-128.631696
+err: dist_abs=0.013256, elev_abs_deg=22.691263, azim_abs_deg=95.308292
+
+=== Camera center (world) ===
+at : -0.026760 0.095216 0.008947
+gt : -0.176124 0.293641 0.236129
+est: -0.292577 0.176478 -0.203493
