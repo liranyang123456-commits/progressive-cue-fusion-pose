@@ -13,11 +13,15 @@ Writes manuscript/.../tables/tab_bop.tex, tab_bop_fminit.tex and bop_macros.tex 
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from bop_metrics import load_models_info, rotation_error_deg, symmetry_transforms  # noqa: E402
 RES = ROOT / "bop6dof_results"
 MAN = ROOT / "manuscript" / "computational_visual_media"
 TABLES = MAN / "tables"
@@ -25,6 +29,52 @@ DATASETS = [("lmo", "LM-O"), ("lm", "LM"), ("tless", "T-LESS")]
 BINS = ["15-30", "30-60", "60-90", "90-180"]
 BIN_KEY = {"15-30": "BinA", "30-60": "BinB", "60-90": "BinC", "90-180": "BinD"}  # LaTeX macro names cannot contain digits
 RNG = np.random.default_rng(12291)
+BOP_ROOT = Path(os.environ.get("BOP_ROOT", os.environ.get("BOP_ROOT", "data/bop")))
+MODELS_DIR = {"lm": "models", "lmo": "models", "tless": "models_cad"}
+_INFO: dict[str, dict] = {}
+_SYMS: dict[tuple, list] = {}
+_GT: dict[tuple, np.ndarray | None] = {}
+SYM_CHECK = {"n": 0, "max_dev": 0.0}
+
+
+def sym_rots(ds: str, obj_id) -> list[np.ndarray]:
+    """Rotation parts of the object's symmetry transforms (models_info.json; continuous symmetries sampled at 5 deg)."""
+    key = (ds, int(obj_id))
+    if key not in _SYMS:
+        if ds not in _INFO:
+            mdir = BOP_ROOT / ds / MODELS_DIR[ds]
+            _INFO[ds] = load_models_info(mdir) if (mdir / "models_info.json").exists() else {}
+        info = _INFO[ds].get(str(int(obj_id)))
+        _SYMS[key] = [S[:3, :3] for S in symmetry_transforms(info, n_cont=72)] if info else [np.eye(3)]
+    return _SYMS[key]
+
+
+def gt_rot(ds: str, tag: str):
+    key = (ds, tag)
+    if key not in _GT:
+        pj = RES / ds / str(tag) / "protocol.json"
+        _GT[key] = np.array(json.loads(pj.read_text(encoding="utf-8"))["gt_R"], dtype=np.float64).reshape(3, 3) if pj.exists() else None
+    return _GT[key]
+
+
+def add_sym_error(ds: str, recs: list[dict]) -> None:
+    """e_R_sym_deg = min over the object's symmetry transforms of the rotation error (identity for asymmetric objects).
+    The raw e_R_deg stored by the evaluators is re-derived from R_est and the protocol's gt_R as a frame-convention check."""
+    for r in recs:
+        r["e_R_sym_deg"] = float(r["e_R_deg"])
+        if "R_est" not in r or "tag" not in r or "obj_id" not in r:
+            continue
+        Rg = gt_rot(ds, r["tag"])
+        if Rg is None:
+            continue
+        try:
+            Re = np.array(r["R_est"], dtype=np.float64).reshape(3, 3)
+        except Exception:  # failure records of a baseline may carry no pose
+            continue
+        raw = rotation_error_deg(Re, Rg)
+        SYM_CHECK["n"] += 1
+        SYM_CHECK["max_dev"] = max(SYM_CHECK["max_dev"], abs(raw - float(r["e_R_deg"])))
+        r["e_R_sym_deg"] = float(min(rotation_error_deg(Re, Rg @ S) for S in sym_rots(ds, r["obj_id"])))
 
 
 def read_jsonl(p: Path) -> list[dict]:
@@ -49,7 +99,9 @@ def load_all(ds: str) -> dict[str, list[dict]]:
                      ("ours_full_unbal", "results_unbalanced.jsonl"), ("ours_refine_unbal", "results_init_bins_unbalanced.jsonl"),
                      ("ours_wapr", "baseline_wapr_from_ours.jsonl"),
                      ("wapr_refine", "baseline_wapr_refine.jsonl"), ("wapr_full", "baseline_wapr_full.jsonl"), ("diffdope", "baseline_diffdope.jsonl"),
-                     ("vggt_init", "baseline_vggt_init.jsonl")):
+                     ("vggt_init", "baseline_vggt_init.jsonl"),
+                     ("pi3_init", "baseline_pi3_init.jsonl"), ("pi3_ours", "results_init_pi3.jsonl"),
+                     ("ours_full_occ", "results_occ.jsonl"), ("scflow2", "baseline_scflow2.jsonl")):
         recs = read_jsonl(d / fn)
         # keep the last record per (tag, bin)
         uniq: dict[tuple, dict] = {}
@@ -58,6 +110,7 @@ def load_all(ds: str) -> dict[str, list[dict]]:
                 continue
             uniq[(r.get("tag"), str(r.get("bin", "none")))] = r
         groups[name] = list(uniq.values())
+        add_sym_error(ds, groups[name])
     return groups
 
 
@@ -65,6 +118,7 @@ def summarize(recs: list[dict]) -> dict:
     if not recs:
         return {}
     eR = np.array([float(r["e_R_deg"]) for r in recs])
+    eRs = np.array([float(r.get("e_R_sym_deg", r["e_R_deg"])) for r in recs])
     et = np.array([float(r["e_t_mm"]) for r in recs])
     add = np.array([bool(r["add_lt_0.1d"]) for r in recs])
     ar_s = np.array([float(r["ar_mssd"]) for r in recs])
@@ -76,8 +130,15 @@ def summarize(recs: list[dict]) -> dict:
         idx = RNG.integers(0, len(eR), len(eR))
         boots.append(np.mean(eR[idx] <= 10))
     lo, hi = np.percentile(boots, [2.5, 97.5])
+    boots_s = []
+    for _ in range(2000):
+        idx = RNG.integers(0, len(eRs), len(eRs))
+        boots_s.append(np.mean(eRs[idx] <= 10))
+    lo_s, hi_s = np.percentile(boots_s, [2.5, 97.5])
     return {"n": int(len(recs)), "eR_median": float(np.median(eR)), "eR_mean": float(eR.mean()), "et_median": float(np.median(et)),
             "sr5": float(np.mean(eR <= 5)), "sr10": float(np.mean(eR <= 10)), "sr10_ci": (float(lo), float(hi)), "sr30": float(np.mean(eR <= 30)),
+            "eRsym_median": float(np.median(eRs)), "sr10_sym": float(np.mean(eRs <= 10)), "sr10_sym_ci": (float(lo_s), float(hi_s)),
+            "sr30_sym": float(np.mean(eRs <= 30)), "sr5_sym": float(np.mean(eRs <= 5)),
             "add01": float(add.mean()), "ar_mssd": float(ar_s.mean()), "ar_mspd": float(ar_p.mean()),
             "t_median": float(np.nanmedian(tt)) if np.isfinite(tt).any() else float("nan")}
 
@@ -106,7 +167,8 @@ def f1(x: float, nd: int = 1) -> str:
 def row(name: str, binlab: str, s: dict) -> str:
     if not s:
         return ""
-    return (f"{name} & {binlab} & {s['n']} & {f1(s['eR_median'])} & {pct(s['sr10'])} [{pct(s['sr10_ci'][0])},{pct(s['sr10_ci'][1])}] & "
+    return (f"{name} & {binlab} & {s['n']} & {f1(s['eR_median'])} & {pct(s['sr10'])} & {f1(s['eRsym_median'])} & "
+            f"{pct(s['sr10_sym'])} [{pct(s['sr10_sym_ci'][0])},{pct(s['sr10_sym_ci'][1])}] & "
             f"{pct(s['add01'])} & {s['ar_mssd']:.2f} & {s['ar_mspd']:.2f} & {ftime(s['t_median'])} \\\\")
 
 
@@ -116,11 +178,15 @@ def bop_table(all_ds: dict[str, dict[str, list[dict]]]) -> str:
              "frames sampled with a fixed seed; the object mask is given, no pose prior). "
              "\\emph{Initialisation-free} methods receive only the mask, depth and RGB crop. \\emph{Refiners} start from the same "
              "perturbed poses $T_0$ in four rotation-error bins (deg) with distance scale in $[0.7,1.4]$ and lateral offset $\\le5\\%$. "
-             "$e_R$: median rotation error (deg, symmetry-aware); SR@$10^\\circ$ with bootstrap 95\\% CI; ADD(-S)$<0.1d$ recall; "
-             "BOP average recalls AR$_{\\mathrm{MSSD}}$ and AR$_{\\mathrm{MSPD}}$; median seconds per frame (RTX~5090, shared GPU).}",
+             "$e_R$ / SR@$10^\\circ$: median rotation error (deg) and success rate with the raw rotation error; $e_R^{\\mathrm{sym}}$ / SR@$10^\\circ$ sym.: "
+             "the same with the rotation error taken as the minimum over the object's symmetry transforms listed in \\texttt{models\\_info.json} "
+             "(identity for asymmetric objects; continuous symmetries sampled every $5^\\circ$), with bootstrap 95\\% CI; ADD(-S)$<0.1d$ recall; "
+             "BOP average recalls AR$_{\\mathrm{MSSD}}$ and AR$_{\\mathrm{MSPD}}$; median seconds per frame (RTX~5090, shared GPU; "
+             "SCFlow2 on an RTX~2080\\,Ti under its CUDA~11.7 toolchain, so its time is not comparable to the other rows). "
+             "The oracle row uses the raw error (the retained candidates store only $e_R$).}",
              "\\label{tab:bop}", "\\footnotesize", "\\setlength{\\tabcolsep}{3.5pt}",
-             "\\begin{tabular}{@{}llccccccc@{}}", "\\toprule",
-             "Method & $T_0$ bin & $N$ & med.\\ $e_R$ & SR@10$^\\circ$ [CI] & ADD(-S)$<0.1d$ & AR$_{\\mathrm{MSSD}}$ & AR$_{\\mathrm{MSPD}}$ & s/frame \\\\"]
+             "\\begin{tabular}{@{}llccccccccc@{}}", "\\toprule",
+             "Method & $T_0$ bin & $N$ & med.\\ $e_R$ & SR@10$^\\circ$ & med.\\ $e_R^{\\mathrm{sym}}$ & SR@10$^\\circ$ sym.\\ [CI] & ADD(-S)$<0.1d$ & AR$_{\\mathrm{MSSD}}$ & AR$_{\\mathrm{MSPD}}$ & s/frame \\\\"]
     any_row = False
     for ds, disp in DATASETS:
         g = all_ds.get(ds, {})
@@ -131,9 +197,12 @@ def bop_table(all_ds: dict[str, dict[str, list[dict]]]) -> str:
         s = summarize(g.get("ours_full_unbal", []))
         if s:
             block.append(row("\\quad synthetic loss scaling, no lateral polish", "none", s))
+        s = summarize(g.get("ours_full_occ", []))
+        if s:
+            block.append(row("\\quad occlusion-aware silhouette term", "none", s))
         o = oracle_summary(g.get("ours_full", []))
         if o:
-            block.append(f"\\quad oracle choice among the retained candidates & none & {o['n']} & {f1(o['eR_median'])} & {pct(o['sr10'])} & -- & -- & -- & -- \\\\")
+            block.append(f"\\quad oracle choice among the retained candidates (raw $e_R$) & none & {o['n']} & {f1(o['eR_median'])} & {pct(o['sr10'])} & -- & -- & -- & -- & -- & -- \\\\")
         s = summarize(g.get("ours_wapr", []))
         if s:
             block.append(row("Proposed stages I--III $\\rightarrow$ WAPR refine", "none", s))
@@ -141,14 +210,14 @@ def bop_table(all_ds: dict[str, dict[str, list[dict]]]) -> str:
         if s:
             block.append(row("WAPR (12 hypotheses + refine)", "none", s))
         for b in BINS:
-            for key, name in (("ours_refine", "Proposed stages II--IV"), ("wapr_refine", "WAPR refine"), ("diffdope", "Diff-DOPE")):
+            for key, name in (("ours_refine", "Proposed stages II--IV"), ("wapr_refine", "WAPR refine"), ("scflow2", "SCFlow2"), ("diffdope", "Diff-DOPE")):
                 recs = [r for r in g.get(key, []) if str(r.get("bin")) == b]
                 s = summarize(recs)
                 if s:
                     block.append(row(name, b, s))
         if block:
             any_row = True
-            lines += ["\\midrule", f"\\multicolumn{{9}}{{@{{}}l}}{{\\textit{{{disp}}}}} \\\\"] + block
+            lines += ["\\midrule", f"\\multicolumn{{11}}{{@{{}}l}}{{\\textit{{{disp}}}}} \\\\"] + block
     lines += ["\\bottomrule", "\\end{tabular}", "\\end{table*}"]
     return ("\n".join(lines) + "\n") if any_row else ""
 
@@ -175,12 +244,15 @@ def bop_table_compact(all_ds: dict[str, dict[str, list[dict]]]) -> str:
              "\\caption{Full 6-DoF object pose on real BOP frames (LM-O, LM, T-LESS; 8 objects per dataset, 104 frames). "
              "Initialisation-free methods receive only mask, depth and RGB; refiners start from the same perturbed poses $T_0$ in four "
              "rotation-error bins ($15$--$30$, $30$--$60$, $60$--$90$, $90$--$180^\\circ$). "
-             "SR@$10^\\circ$ (symmetry-aware) in \\%, for refiners per bin; ADD(-S)$<0.1d$ recall over all frames (refiners: all bins); "
-             "AR$_{\\mathrm{MSSD}}$: BOP average recall; s: median seconds per frame (shared GPU). The complete table with medians, "
+             "SR@$10^\\circ$ in \\% with the rotation error taken as the minimum over the object's symmetry transforms of \\texttt{models\\_info.json} "
+             "(identity for asymmetric objects; raw value in brackets for the initialisation-free rows), for refiners per bin; "
+             "ADD(-S)$<0.1d$ recall over all frames (refiners: all bins); "
+             "AR$_{\\mathrm{MSSD}}$: BOP average recall; s: median seconds per frame (shared RTX~5090; SCFlow2 on an RTX~2080\\,Ti, "
+             "not comparable). The complete table with medians, "
              "confidence intervals and MSPD is Supplementary Table~S7.}",
              "\\label{tab:bop}", "\\footnotesize", "\\setlength{\\tabcolsep}{3pt}",
              "\\begin{tabular}{@{}llcccc@{}}", "\\toprule",
-             "Dataset & Method & SR@10$^\\circ$ (per $T_0$ bin) & ADD(-S) & AR$_{\\mathrm{MSSD}}$ & s \\\\"]
+             "Dataset & Method & SR@10$^\\circ$ sym.\\ (per $T_0$ bin) & ADD(-S) & AR$_{\\mathrm{MSSD}}$ & s \\\\"]
     any_row = False
     for ds, disp in DATASETS:
         g = all_ds.get(ds, {})
@@ -189,14 +261,14 @@ def bop_table_compact(all_ds: dict[str, dict[str, list[dict]]]) -> str:
         def one(name, key):
             s = summarize(g.get(key, []))
             if s:
-                block.append(f"{name} & {pct(s['sr10'])} & {pct(s['add01'])} & {s['ar_mssd']:.2f} & {ftime(s['t_median'])} \\\\")
+                block.append(f"{name} & {pct(s['sr10_sym'])} ({pct(s['sr10'])}) & {pct(s['add01'])} & {s['ar_mssd']:.2f} & {ftime(s['t_median'])} \\\\")
 
         def bins(name, key):
             cells, allr = [], []
             for b in BINS:
                 recs = [r for r in g.get(key, []) if str(r.get("bin")) == b]
                 s = summarize(recs)
-                cells.append(pct(s["sr10"]) if s else "--")
+                cells.append(pct(s["sr10_sym"]) if s else "--")
                 allr += recs
             s = summarize(allr)
             if s:
@@ -204,13 +276,15 @@ def bop_table_compact(all_ds: dict[str, dict[str, list[dict]]]) -> str:
 
         one("\\textbf{Proposed (I--IV, no $T_0$)}", "ours_full")
         one("\\quad synthetic loss scaling", "ours_full_unbal")
+        one("\\quad occlusion-aware silhouette term", "ours_full_occ")
         o = oracle_summary(g.get("ours_full", []))
         if o:
-            block.append(f"\\quad oracle among retained candidates & {pct(o['sr10'])} & -- & -- & -- \\\\")
+            block.append(f"\\quad oracle among retained candidates (raw) & ({pct(o['sr10'])}) & -- & -- & -- \\\\")
         one("Proposed I--III $\\rightarrow$ WAPR refine", "ours_wapr")
         one("WAPR 12 hyp.\\ + refine (no $T_0$)", "wapr_full")
         bins("Proposed II--IV from $T_0$", "ours_refine")
         bins("WAPR refine from $T_0$", "wapr_refine")
+        bins("SCFlow2 from $T_0$", "scflow2")
         bins("Diff-DOPE from $T_0$", "diffdope")
         if block:
             any_row = True
@@ -221,21 +295,23 @@ def bop_table_compact(all_ds: dict[str, dict[str, list[dict]]]) -> str:
 
 def fminit_table(all_ds: dict[str, dict[str, list[dict]]]) -> str:
     lines = ["% Auto-generated by tools/export_bop_results.py", "\\begin{table}[!t]", "\\centering",
-             "\\caption{Foundation-model initialisation. VGGT receives the real RGB crop and 12 rendered templates of the mesh with known "
-             "poses; its predicted template cameras are aligned to the known ones by a similarity transform, which yields an object pose for "
-             "the real frame (no mask, no depth). The pose is then refined by stages II--IV of the proposed method. "
-             "Same frames as Table~\\ref{tab:bop} of the main paper.}",
+             "\\caption{Foundation-model initialisation. VGGT (CVPR~2025) and $\\pi^3$ (ICLR~2026) receive the real RGB crop and 12 rendered "
+             "templates of the mesh with known poses; the predicted template cameras are aligned to the known ones by a similarity transform, "
+             "which yields an object pose for the real frame (no mask, no depth). The pose is then refined by stages II--IV of the proposed "
+             "method. Same frames as Table~\\ref{tab:bop} of the main paper; rotation metrics raw / symmetry-aware (sym.).}",
              "\\label{tab:bop_fminit}", "\\footnotesize", "\\setlength{\\tabcolsep}{3pt}",
-             "\\begin{tabular}{@{}llcccccc@{}}", "\\toprule",
-             "Dataset & Method & $N$ & med.\\ $e_R$ & SR@10$^\\circ$ & SR@30$^\\circ$ & ADD(-S)$<0.1d$ & s/frame \\\\", "\\midrule"]
+             "\\begin{tabular}{@{}llccccccc@{}}", "\\toprule",
+             "Dataset & Method & $N$ & med.\\ $e_R$ & SR@10$^\\circ$ & SR@10$^\\circ$ sym.\\ & SR@30$^\\circ$ sym.\\ & ADD(-S)$<0.1d$ & s/frame \\\\", "\\midrule"]
     any_row = False
     for ds, disp in DATASETS:
         g = all_ds.get(ds, {})
         block = []
-        for key, name in (("vggt_init", "VGGT init only"), ("vggt_ours", "VGGT $\\rightarrow$ stages II--IV"), ("ours_full", "Proposed (stages I--IV)")):
+        for key, name in (("vggt_init", "VGGT init only"), ("vggt_ours", "VGGT $\\rightarrow$ stages II--IV"),
+                          ("pi3_init", "$\\pi^3$ init only"), ("pi3_ours", "$\\pi^3$ $\\rightarrow$ stages II--IV"),
+                          ("ours_full", "Proposed (stages I--IV, no initialisation)")):
             s = summarize(g.get(key, []))
             if s:
-                block.append(f"{disp if not block else ''} & {name} & {s['n']} & {f1(s['eR_median'])} & {pct(s['sr10'])} & {pct(s['sr30'])} & {pct(s['add01'])} & {ftime(s['t_median'])} \\\\")
+                block.append(f"{disp if not block else ''} & {name} & {s['n']} & {f1(s['eR_median'])} & {pct(s['sr10'])} & {pct(s['sr10_sym'])} & {pct(s['sr30_sym'])} & {pct(s['add01'])} & {ftime(s['t_median'])} \\\\")
         if block:
             any_row = True
             lines += block + ["\\midrule"]
@@ -255,20 +331,23 @@ def macros(all_ds) -> str:
         g = all_ds.get(ds, {})
         key = {"lmo": "LMO", "lm": "LM", "tless": "TLESS"}[ds]
         for mk, suffix in (("ours_full", "Ours"), ("wapr_full", "WaprFull"), ("vggt_init", "Vggt"), ("vggt_ours", "VggtOurs"),
+                           ("pi3_init", "Pi"), ("pi3_ours", "PiOurs"), ("ours_full_occ", "OursOcc"), ("scflow2", "ScflowAll"),
                            ("ours_full_unbal", "OursUnbal"), ("ours_wapr", "OursWapr"), ("diffdope", "DiffDopeAll"), ("wapr_refine", "WaprRefAll"), ("ours_refine", "OursRefAll")):
             s = summarize(g.get(mk, []))
             if s:
-                L += [f"\\newcommand{{\\Bop{key}{suffix}SRten}}{{{pct(s['sr10'])}}}", f"\\newcommand{{\\Bop{key}{suffix}SRthirty}}{{{pct(s['sr30'])}}}",
+                L += [f"\\newcommand{{\\Bop{key}{suffix}SRtenSym}}{{{pct(s['sr10_sym'])}}}", f"\\newcommand{{\\Bop{key}{suffix}SRthirtySym}}{{{pct(s['sr30_sym'])}}}",
+                      f"\\newcommand{{\\Bop{key}{suffix}ERsym}}{{{f1(s['eRsym_median'])}}}",
+                      f"\\newcommand{{\\Bop{key}{suffix}SRten}}{{{pct(s['sr10'])}}}", f"\\newcommand{{\\Bop{key}{suffix}SRthirty}}{{{pct(s['sr30'])}}}",
                       f"\\newcommand{{\\Bop{key}{suffix}ER}}{{{f1(s['eR_median'])}}}", f"\\newcommand{{\\Bop{key}{suffix}ET}}{{{f1(s['et_median'], 0)}}}",
                       f"\\newcommand{{\\Bop{key}{suffix}ADD}}{{{pct(s['add01'])}}}", f"\\newcommand{{\\Bop{key}{suffix}N}}{{{s['n']}}}",
                       f"\\newcommand{{\\Bop{key}{suffix}ARmssd}}{{{s['ar_mssd']:.2f}}}", f"\\newcommand{{\\Bop{key}{suffix}Time}}{{{ftime(s['t_median'])}}}"]
         for b in BINS:
             bk = BIN_KEY[b]
-            for mk, suffix in (("ours_refine", "OursRef"), ("wapr_refine", "WaprRef"), ("diffdope", "DiffDope")):
+            for mk, suffix in (("ours_refine", "OursRef"), ("wapr_refine", "WaprRef"), ("diffdope", "DiffDope"), ("scflow2", "Scflow")):
                 s = summarize([r for r in g.get(mk, []) if str(r.get("bin")) == b])
                 if s:
                     L += [f"\\newcommand{{\\Bop{key}{suffix}{bk}SRten}}{{{pct(s['sr10'])}}}", f"\\newcommand{{\\Bop{key}{suffix}{bk}ADD}}{{{pct(s['add01'])}}}",
-                          f"\\newcommand{{\\Bop{key}{suffix}{bk}ER}}{{{f1(s['eR_median'])}}}"]
+                          f"\\newcommand{{\\Bop{key}{suffix}{bk}ER}}{{{f1(s['eR_median'])}}}", f"\\newcommand{{\\Bop{key}{suffix}{bk}SRtenSym}}{{{pct(s['sr10_sym'])}}}"]
         o = oracle_summary(g.get("ours_full", []))
         if o:
             L += [f"\\newcommand{{\\Bop{key}OursOracleSRten}}{{{pct(o['sr10'])}}}", f"\\newcommand{{\\Bop{key}OursOracleSRthirty}}{{{pct(o['sr30'])}}}",
@@ -276,13 +355,13 @@ def macros(all_ds) -> str:
     defined = {ln.split("{")[1].split("}")[0] for ln in L if ln.startswith("\\newcommand")}
     expected = []
     for key in ("LMO", "LM", "TLESS"):
-        for suffix in ("Ours", "WaprFull", "Vggt", "VggtOurs", "OursUnbal", "OursWapr", "DiffDopeAll", "WaprRefAll", "OursRefAll"):
-            expected += [f"Bop{key}{suffix}{s}" for s in ("SRten", "SRthirty", "ER", "ET", "ADD", "N", "ARmssd", "Time")]
+        for suffix in ("Ours", "WaprFull", "Vggt", "VggtOurs", "Pi", "PiOurs", "OursOcc", "OursUnbal", "OursWapr", "DiffDopeAll", "WaprRefAll", "OursRefAll", "ScflowAll"):
+            expected += [f"Bop{key}{suffix}{s}" for s in ("SRten", "SRthirty", "ER", "ET", "ADD", "N", "ARmssd", "Time", "SRtenSym", "SRthirtySym", "ERsym")]
         expected += [f"Bop{key}OursOracleSRten", f"Bop{key}OursOracleSRthirty", f"Bop{key}OursOracleN"]
         for b in BINS:
             bk = BIN_KEY[b]
-            for suffix in ("OursRef", "WaprRef", "DiffDope"):
-                expected += [f"Bop{key}{suffix}{bk}SRten", f"Bop{key}{suffix}{bk}ADD", f"Bop{key}{suffix}{bk}ER"]
+            for suffix in ("OursRef", "WaprRef", "DiffDope", "Scflow"):
+                expected += [f"Bop{key}{suffix}{bk}SRten", f"Bop{key}{suffix}{bk}ADD", f"Bop{key}{suffix}{bk}ER", f"Bop{key}{suffix}{bk}SRtenSym"]
     L.append("% placeholders (no data yet)")
     for name in expected:
         if ("\\" + name) not in defined:
@@ -311,7 +390,8 @@ def main() -> int:
     (ROOT / "benchmark_results" / "bop_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     for ds, g in summary.items():
         for k, s in g.items():
-            print(f"{ds:6s} {k:22s} n={s['n']:3d} medER={s['eR_median']:6.1f} SR10={100*s['sr10']:5.1f}% ADD={100*s['add01']:5.1f}% ARmssd={s['ar_mssd']:.2f} t={s['t_median']:.0f}s")
+            print(f"{ds:6s} {k:22s} n={s['n']:3d} medER={s['eR_median']:6.1f} SR10={100*s['sr10']:5.1f}% | sym: medER={s['eRsym_median']:6.1f} SR10={100*s['sr10_sym']:5.1f}% | ADD={100*s['add01']:5.1f}% ARmssd={s['ar_mssd']:.2f} t={s['t_median']:.0f}s")
+    print(f"[bop] symmetry check: {SYM_CHECK['n']} records, max |e_R(recomputed) - e_R(stored)| = {SYM_CHECK['max_dev']:.2e} deg")
     print("[bop] tables written:", "tab_bop.tex" if t else "tab_bop.tex (stub)", "|", "tab_bop_fminit.tex" if t2 else "tab_bop_fminit.tex (stub)")
     return 0
 

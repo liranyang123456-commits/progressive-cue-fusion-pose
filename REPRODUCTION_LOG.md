@@ -18,6 +18,8 @@ and are not used anywhere in the revision.
 | WAPR baseline env | Python 3.12, torch 2.11.0+cu128, `wapr` (pip), TensorRT engines built locally |
 | Diff-DOPE | upstream repository, installed `--no-deps` into the `kaolin` env |
 | VGGT | `facebook/VGGT-1B`, pip install from `facebookresearch/vggt` |
+| pi3 | `yyfz233/Pi3` checkpoint, code from `yyfz/Pi3` (run in float16; the bf16 path requires flash-attention SDPA, unavailable on sm_120) |
+| SCFlow2 | upstream `W-QY/SCFlow2` + released checkpoint, run on the GPU worker in a separate Python 3.10 venv: torch 2.0.1+cu117, mmcv-full 1.7.2, pointnet2_ops, PyTorch3D 0.7.4 (built), lietorch replaced by `tools/scflow2_port/lietorch_shim.py`, scikit-sparse by `tools/scflow2_port/sksparse_shim_cholmod.py`; see `tools/scflow2_port/README.md` |
 
 Hardware: control machine RTX 5090 Laptop GPU (24 GB, shared with unrelated training jobs during the
 runs -- wall-clock times in the tables are therefore upper bounds); GPU worker RTX 2080 Ti (11 GB,
@@ -64,6 +66,13 @@ python baselines/run_diffdope_bop.py --root bop6dof_results/<ds>
 python tools/render_templates_for_fm.py --root bop6dof_results/<ds>
 python baselines/run_vggt_init.py --root bop6dof_results/<ds>
 python bop_full6dof_eval.py --dataset <ds> --from-export --init-from vggt --out bop6dof_results/<ds>
+python baselines/run_pi3_init.py --root bop6dof_results/<ds>
+python bop_full6dof_eval.py --dataset <ds> --from-export --init-from pi3 --out bop6dof_results/<ds>
+python bop_full6dof_eval.py --dataset lmo --from-export --occlusion-aware --out bop6dof_results/lmo       # ablation row
+# SCFlow2 (CUDA 11 worker; tools/scflow2_port/README.md)
+python tools/make_scflow2_data.py                                   # -> external/scflow2_data (BOP layout, image lists, initial_poses/ours_bin*, configs)
+#   worker: scflow2_step1..5.cmd, install the two shims, patch_scflow2_windows.py <checkout>, scflow2_run.cmd
+python tools/convert_scflow2_results.py --results external/scflow2_results
 # tables / figures
 python tools/derive_geom_only.py --run-root benchmark_runs/<mesh>_<N>gt
 python tools/export_revision_results.py
@@ -73,4 +82,11 @@ python tools/make_qualitative_figures.py
 
 ## Run status
 
-(filled in as runs complete; see `benchmark_results/revision_summary.json` and `bop_summary.json`)
+(see `benchmark_results/revision_summary.json` and `bop_summary.json`)
+
+* SCFlow2: 12 configs (3 datasets x 4 bins), all exit 0; 416 refined poses; ~1.1 s/frame on the 2080 Ti.
+  One T-LESS run initially failed because the DINOv2 hub download was interrupted (`RemoteDisconnected`);
+  it was re-run with `TORCH_HOME` pointing at the pre-populated hub cache. The time column of SCFlow2 is
+  therefore measured on a different GPU than all other BOP rows and is marked as not comparable.
+* pi3 initialisation: LM-O / LM / T-LESS, 12 rendered templates + real crop, float16; refined with stages II-IV
+  (`results_init_pi3.jsonl`).

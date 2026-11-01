@@ -67,6 +67,11 @@ with contextlib.redirect_stdout(_buf):
     import Exp_Camera_Optim_RT_Val_Beam_Search12291_Standford122 as exp  # noqa: E402
 
 F_GL2CV = np.diag([1.0, -1.0, -1.0])
+# --occlusion-aware: pixels outside the visible mask whose scene depth is in front of the object (closer than the
+# median visible object depth minus OCC_MARGIN_R * mesh radius) are excluded from the silhouette terms.
+OCCLUSION_AWARE = False
+OCC_MARGIN_R = 0.25
+OCC_MESH_R_MM = 0.0
 
 # --------------------------------------------------------------------------------------
 # Dataset access
@@ -262,6 +267,7 @@ class VirtualObs:
     depth: np.ndarray  # (S,S) mm metric view depth in the virtual camera
     normals: np.ndarray  # (S,S,3) in virtual OpenCV camera frame
     rgb: np.ndarray  # (S,S,3)
+    scene_depth: np.ndarray | None = None  # (S,S) metric depth of the whole scene in the virtual view (occlusion-aware variant)
 
 
 def make_virtual_obs(fr: Frame, size: int = 192, fovy_deg: float = 40.0, pad: float = 1.6,
@@ -307,6 +313,12 @@ def make_virtual_obs(fr: Frame, size: int = 192, fovy_deg: float = 40.0, pad: fl
     obs = VirtualObs(R_v=R_v, K_v=K_v, size=size, fovy_deg=fovy, mask=mask_v.astype(np.float32),
                       depth=depth_v, normals=normals_v, rgb=rgb_v.astype(np.float32))
     obs.centre_uv = (uc, vc)  # type: ignore[attr-defined]
+    if OCCLUSION_AWARE:
+        scene_z = np.where(depth_src > 0, P_v[..., 2], 0.0).astype(np.float32)
+        obs.scene_depth = scene_z
+        obj_z = depth_v[mask_v & (depth_v > 0)]
+        d_med = float(np.median(obj_z)) if obj_z.size else 0.0
+        obs.front_frac = float(np.mean((~mask_v) & (scene_z > 0) & (scene_z < d_med)))  # type: ignore[attr-defined]
     return obs
 
 
@@ -324,6 +336,19 @@ def rotate_obs(obs: VirtualObs, psi_deg: float) -> tuple[np.ndarray, np.ndarray,
     n = n @ Rz.T
     n = n * (mask > 0.5)[..., None]
     return mask, depth, n, rgb
+
+
+def set_sil_scene(obs: VirtualObs, psi_deg: float, device) -> None:
+    """Install the scene depth of this observation (rolled and vertically flipped like the other observation tensors)
+    together with the occluder margin in the pipeline, or clear it."""
+    if not OCCLUSION_AWARE or getattr(obs, "scene_depth", None) is None:
+        exp.SIL_SCENE_DEPTH = None
+        return
+    S = obs.size
+    M = cv2.getRotationMatrix2D((S / 2.0 - 0.5, S / 2.0 - 0.5), -psi_deg, 1.0)
+    z = cv2.warpAffine(obs.scene_depth, M, (S, S), flags=cv2.INTER_NEAREST, borderValue=0)
+    exp.SIL_SCENE_DEPTH = torch.from_numpy(np.ascontiguousarray(z[::-1])).float().to(device)
+    exp.SIL_OCC_MARGIN = float(OCC_MARGIN_R * OCC_MESH_R_MM)
 
 
 def obs_to_pipeline(mask, depth, normals, rgb, device):
@@ -445,6 +470,7 @@ def run_method(mesh, mesh_r: float, obs: VirtualObs, device, out_dir: Path, *, r
         psi = 360.0 * k / roll_bins
         m, d, n, r = rotate_obs(obs, psi)
         mt, dt, nt, rt = obs_to_pipeline(m, d, n, r, device)
+        set_sil_scene(obs, psi, device)
         seeds = exp.global_random_sampling_1024(
             mesh=mesh, verts=mesh.verts, mesh_center_xyz=at, silhouette_renderer=sil_r, rasterizer=rast,
             phong_renderer=None, image_ref_silhouette=mt, ref_depth=dt, ref_normals=nt, image_ref_rgb=None,
@@ -477,6 +503,7 @@ def run_method(mesh, mesh_r: float, obs: VirtualObs, device, out_dir: Path, *, r
             m, d, n, r = rotate_obs(obs, psi)
             obs_cache[psi] = obs_to_pipeline(m, d, n, r, device)
         mt, dt, nt, rt = obs_cache[psi]
+        set_sil_scene(obs, psi, device)
         run_dir = out_dir / f"seed_{i:02d}"
         run_dir.mkdir(parents=True, exist_ok=True)
         prev = {k: os.environ.get(k, "") for k in ("VAL_LOCAL_BEAM_STEP_FRAC", "VAL_LOCAL_BEAM_LEVELS", "VAL_LOCAL_BEAM_WIDTH")}
@@ -507,6 +534,7 @@ def run_method(mesh, mesh_r: float, obs: VirtualObs, device, out_dir: Path, *, r
     obs_f, best_d, best_e, best_a, best_psi, best_l = polish_pose(fr, obs, mesh, sil_r, rast, device, best_d, best_e, best_a, best_psi,
                                                                  roll_bins=roll_bins, lateral=lateral, verbose=verbose)
     t3 = exp._stage_now()
+    exp.SIL_SCENE_DEPTH = None
     return {
         "dist": best_d, "elev": best_e, "azim": best_a, "psi": best_psi, "loss": best_l,
         "t_global_s": t1 - t0, "t_local_s": t2 - t1, "t_roll_s": t3 - t2, "t_total_s": t3 - t0,
@@ -535,6 +563,7 @@ def polish_pose(fr, obs: VirtualObs, mesh, sil_r, rast, device, d: float, e: flo
 
     def _loss(o, dd, ee, aa, ps):
         mt, dt, nt, _ = _obs_tensors(o, ps)
+        set_sil_scene(o, ps, device)
         return float(exp._evaluate_pose_loss_no_grad(mesh, sil_r, rast, mt, dt, nt, at, dd, ee, aa, device)["loss_total"])
 
     # (i) roll sweep
@@ -647,6 +676,7 @@ def run_from_init(mesh, mesh_r: float, obs: VirtualObs, device, out_dir: Path, R
     se = max(-89.0, min(89.0, se))
     m, d, n, r = rotate_obs(obs, psi)
     mt, dt, nt, rt = obs_to_pipeline(m, d, n, r, device)
+    set_sil_scene(obs, psi, device)
     run_dir = out_dir / "init_refine"
     run_dir.mkdir(parents=True, exist_ok=True)
     l0 = float(exp._evaluate_pose_loss_no_grad(mesh, sil_r, rast, mt, dt, nt, at, sd, se, sa, device)["loss_total"])
@@ -673,6 +703,7 @@ def run_from_init(mesh, mesh_r: float, obs: VirtualObs, device, out_dir: Path, R
     obs_f, best_d, best_e, best_a, best_psi, cur_l = polish_pose(fr, obs, mesh, sil_r, rast, device, best_d, best_e, best_a, best_psi,
                                                                 roll_bins=roll_bins, lateral=lateral, verbose=False)
     t2s = exp._stage_now()
+    exp.SIL_SCENE_DEPTH = None
     if verbose:
         print(f"  [init-refine] start (d={sd:.0f}, e={se:.1f}, a={sa:.1f}, psi={psi:.1f}) loss {l0:.3f} -> {cur_l:.3f}  {t2s - t0s:.1f}s")
     return {"dist": best_d, "elev": best_e, "azim": best_a, "psi": best_psi, "loss": float(cur_l), "loss_init": l0,
@@ -777,11 +808,14 @@ def main() -> int:
                          "drift to a farther shell (reported as an ablation)")
     ap.add_argument("--out-suffix", default="", help="suffix appended to the results file name (e.g. _balanced)")
     ap.add_argument("--no-lateral", action="store_true", help="disable the lateral (optical-axis) polish of stage IV")
+    ap.add_argument("--occlusion-aware", action="store_true",
+                    help="exclude pixels whose scene depth lies in front of the object (occluders) from the silhouette terms")
+    ap.add_argument("--occ-margin", type=float, default=0.25, help="occluder margin in units of the mesh radius")
     ap.add_argument("--from-export", action="store_true",
                     help="use the exported observation.npz/protocol.json packages in --out instead of the raw BOP test folders")
-    ap.add_argument("--init-from", default="none", choices=["none", "bins", "vggt"],
+    ap.add_argument("--init-from", default="none", choices=["none", "bins", "vggt", "pi3"],
                     help="none: full method (stage I-IV); bins: stages II-IV from the exported T0 bins; "
-                         "vggt: stages II-IV from the VGGT initialisation in baseline_vggt_init.jsonl")
+                         "vggt / pi3: stages II-IV from the foundation-model initialisation in baseline_<model>_init.jsonl")
     args = ap.parse_args()
 
     device = torch.device("cuda")
@@ -809,10 +843,13 @@ def main() -> int:
     print(f"[{ds}] {len(frames)} frames, objects={objects}, rot bins={bins}")
 
     PIPE_ENV["VAL_LOSS_SCALE"] = str(args.loss_scale)
+    global OCCLUSION_AWARE, OCC_MARGIN_R
+    OCCLUSION_AWARE = bool(args.occlusion_aware)
+    OCC_MARGIN_R = float(args.occ_margin)
     results_path = out_root / (f"results{args.out_suffix}.jsonl" if args.init_from == "none" else f"results_init_{args.init_from}{args.out_suffix}.jsonl")
     vggt_inits: dict[str, dict] = {}
-    if args.init_from == "vggt":
-        vp = out_root / "baseline_vggt_init.jsonl"
+    if args.init_from in ("vggt", "pi3"):
+        vp = out_root / f"baseline_{args.init_from}_init.jsonl"
         if vp.exists():
             for line in vp.read_text(encoding="utf-8").splitlines():
                 try:
@@ -820,7 +857,7 @@ def main() -> int:
                     vggt_inits[rec_v["tag"]] = rec_v
                 except Exception:
                     pass
-        print(f"[init] {len(vggt_inits)} VGGT initialisations available")
+        print(f"[init] {len(vggt_inits)} {args.init_from.upper()} initialisations available")
     done = set()
     done_count: dict[tuple, int] = {}
     need_per_frame = len(args.rot_bins.split(",")) if args.init_from == "bins" else 1
@@ -899,10 +936,10 @@ def main() -> int:
             else:
                 v = vggt_inits.get(tag)
                 if v is None:
-                    print(f"[skip] {tag}: no VGGT initialisation")
+                    print(f"[skip] {tag}: no {args.init_from.upper()} initialisation")
                     continue
                 R0v, t0v = np.array(v["R_est"]), np.array(v["t_est"])
-                init_list = [("vggt", R0v, R0v @ centre + t0v, float(v["e_R_deg"]))]
+                init_list = [(args.init_from, R0v, R0v @ centre + t0v, float(v["e_R_deg"]))]
             for init in init_list:
                 t_start = time.time()
                 if init is None:
@@ -913,7 +950,7 @@ def main() -> int:
                     bin_name, R0b, t0b, init_err = init
                     res = run_from_init(mesh_c, mesh_r, obs, device, fdir / f"init_{bin_name}", R0b, t0b, roll_bins=args.roll_bins,
                                         fr=fr, lateral=not args.no_lateral)
-                    method_name = "ours_refine" if args.init_from == "bins" else "vggt+ours_refine"
+                    method_name = "ours_refine" if args.init_from == "bins" else f"{args.init_from}+ours_refine"
                 R_v_final = res.pop("R_v", obs.R_v)
                 R_est, t_est_c = pipeline_pose_to_cv(res["dist"], res["elev"], res["azim"], res["psi"], R_v_final, device)
                 met = compute_metrics(R_est, t_est_c, R_gt, t_gt_c, fr.K, pts - centre, info, syms)
@@ -926,7 +963,8 @@ def main() -> int:
                         mc = compute_metrics(Rc, tc, R_gt, t_gt_c, fr.K, pts - centre, info, syms)
                         cand_err.append({"loss": c["loss"], "e_R_deg": mc["e_R_deg"], "e_t_mm": mc["e_t_mm"]})
                 rec = {"dataset": ds, "scene_id": scene_id, "im_id": im_id, "obj_id": obj_id, "tag": tag, "method": method_name,
-                       "bin": bin_name, "init_rot_err_deg_this": init_err, "loss_scale": str(args.loss_scale), "lateral": not args.no_lateral,
+                       "bin": bin_name, "init_rot_err_deg_this": init_err, "loss_scale": str(args.loss_scale), "lateral": not args.no_lateral, "occlusion_aware": bool(args.occlusion_aware),
+                   "front_frac": getattr(obs, "front_frac", None),
                        "centre_uv": [float(x) for x in res.pop("centre_uv")] if res.get("centre_uv") is not None else None,
                        "candidates": cand_err,
                        "R_est": R_est.tolist(), "t_est": (t_est_c - R_est @ centre).tolist(), **met, **res,

@@ -781,6 +781,35 @@ def _postprocess_silhouette_alpha(alpha: torch.Tensor) -> torch.Tensor:
     return a
 
 
+# Occlusion-aware silhouette term (real-data variant, bop_full6dof_eval.py --occlusion-aware). SIL_SCENE_DEPTH is the
+# metric depth of the WHOLE observed scene in the observation frame (same units / orientation as ref_depth). A rendered
+# pixel outside the visible mask is excluded from the silhouette MSE / IoU when the observed scene surface lies in
+# front of the hypothesised object surface by more than SIL_OCC_MARGIN, i.e. when an occluder explains why the object
+# is not visible there. Default None -> no change to any loss (synthetic benchmark unaffected).
+SIL_SCENE_DEPTH = None
+SIL_OCC_MARGIN = 0.0
+
+
+def _occlusion_aware_sil(alpha, ref, vis_mask, zbuf, w_iou, loss_scale, dims):
+    sc = SIL_SCENE_DEPTH
+    if sc is None or tuple(sc.shape[-2:]) != tuple(alpha.shape[-2:]):
+        return None
+    sc = sc.to(device=alpha.device, dtype=alpha.dtype)
+    occl = (vis_mask > 0.5) & (ref < 0.5) & (sc > 0) & (sc < zbuf - float(SIL_OCC_MARGIN))
+    keep = (~occl).to(alpha.dtype)
+    a, r = alpha * keep, ref * keep
+    if dims is None:
+        mse = torch.mean((a - r) ** 2)
+        inter = (a * r).sum()
+        union = a.sum() + r.sum() - inter
+    else:
+        mse = torch.mean((a - r) ** 2, dim=dims)
+        inter = torch.sum(a * r, dim=dims)
+        union = torch.sum(a, dim=dims) + torch.sum(r, dim=dims) - inter
+    iou = 1.0 - (inter / (union + 1e-8))
+    return (1.0 - w_iou) * (mse * loss_scale) + w_iou * iou
+
+
 def _evaluate_pose_loss_no_grad(
     mesh: Meshes,
     silhouette_renderer: MeshRenderer,
@@ -835,6 +864,10 @@ def _evaluate_pose_loss_no_grad(
         fr = rasterizer(meshes_world=mesh, cameras=cams)
         vis_mask = (fr.pix_to_face[..., 0] >= 0).float()[0]
         depth = (fr.zbuf[..., 0][0] * vis_mask)
+        if SIL_SCENE_DEPTH is not None:
+            _ls = _occlusion_aware_sil(alpha, ref, vis_mask, fr.zbuf[..., 0][0], w_iou, loss_scale, None)
+            if _ls is not None:
+                loss_sil = _ls
 
         ref_d = ref_depth.squeeze()
         ref_n = ref_normals.squeeze()
@@ -6032,6 +6065,10 @@ def _evaluate_pose_losses_batch_no_grad(
         fr = rasterizer(meshes_world=mesh_b, cameras=cams)
         face_idx = fr.pix_to_face[..., 0]  # (B,H,W) packed-face indices (global across the packed batch)
         vis_mask = (face_idx >= 0).float()
+        if SIL_SCENE_DEPTH is not None:
+            _ls = _occlusion_aware_sil(alpha, ref_b, vis_mask, fr.zbuf[..., 0], w_iou, loss_scale, (1, 2))
+            if _ls is not None:
+                loss_sil = _ls
         depth = (fr.zbuf[..., 0] * vis_mask) if not use_sil_normals_only else None  # (B,H,W)
 
         ref_d = ref_depth.squeeze().to(device) if not use_sil_normals_only else None  # (H,W)

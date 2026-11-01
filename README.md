@@ -13,7 +13,8 @@ outputs is included; the GPU runs themselves can be reproduced with the commands
 | `run_revision_queue.py` | ordered job queue used for the revision runs (strict no-ground-truth protocol) |
 | `tools/test_no_gt_leak.py` | automated ground-truth-leak test: estimates must be bit-identical under a permutation of GT labels with fixed observations |
 | `bop_full6dof_eval.py`, `bop_metrics.py` | full 6-DoF protocol on BOP LM / LM-O / T-LESS (virtual centred camera, roll bank, symmetry-aware ADD(-S) / MSSD / MSPD), perturbed-pose export for refiners, stages II-IV from an initial pose |
-| `baselines/` | WAPR, Diff-DOPE and VGGT-initialisation wrappers run on the exported frames |
+| `baselines/` | WAPR, Diff-DOPE, VGGT- and pi3-initialisation wrappers run on the exported frames |
+| `tools/make_scflow2_data.py`, `tools/convert_scflow2_results.py`, `tools/scflow2_port/` | SCFlow2 (CVPR 2025) on the same frames and initial poses: data/config export, the CUDA 11 worker scripts, the Windows path patches, the lietorch / scikit-sparse drop-in shims and the result converter (see `tools/scflow2_port/README.md`) |
 | `tools/export_revision_results.py`, `tools/export_bop_results.py`, `tools/make_qualitative_figures.py` | tables, macros and figures of the manuscript |
 | `results/` | per-view metrics (`pose_metrics_summary.csv`), stage timings, BOP `*.jsonl`, leak-test reports |
 
@@ -50,6 +51,11 @@ python baselines/run_diffdope_bop.py --root bop6dof_results/lmo              # D
 python tools/render_templates_for_fm.py --root bop6dof_results/lmo
 python baselines/run_vggt_init.py --root bop6dof_results/lmo                # VGGT environment
 python bop_full6dof_eval.py --dataset lmo --init-from vggt
+python baselines/run_pi3_init.py --root bop6dof_results/lmo                 # pi3 environment
+python bop_full6dof_eval.py --dataset lmo --init-from pi3
+python bop_full6dof_eval.py --dataset lmo --occlusion-aware                 # ablation: occlusion-aware silhouette term
+python tools/make_scflow2_data.py                                           # SCFlow2 input packages + configs (run SCFlow2 on a CUDA 11 machine, see tools/scflow2_port/README.md)
+python tools/convert_scflow2_results.py --results external/scflow2_results
 python tools/export_bop_results.py
 ```
 
