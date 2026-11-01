@@ -177,7 +177,7 @@ def bop_table_compact(all_ds: dict[str, dict[str, list[dict]]]) -> str:
              "rotation-error bins ($15$--$30$, $30$--$60$, $60$--$90$, $90$--$180^\\circ$). "
              "SR@$10^\\circ$ (symmetry-aware) in \\%, for refiners per bin; ADD(-S)$<0.1d$ recall over all frames (refiners: all bins); "
              "AR$_{\\mathrm{MSSD}}$: BOP average recall; s: median seconds per frame (shared GPU). The complete table with medians, "
-             "confidence intervals and MSPD is Supplementary Table~S8.}",
+             "confidence intervals and MSPD is Supplementary Table~S7.}",
              "\\label{tab:bop}", "\\footnotesize", "\\setlength{\\tabcolsep}{3pt}",
              "\\begin{tabular}{@{}llcccc@{}}", "\\toprule",
              "Dataset & Method & SR@10$^\\circ$ (per $T_0$ bin) & ADD(-S) & AR$_{\\mathrm{MSSD}}$ & s \\\\"]
