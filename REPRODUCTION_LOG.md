@@ -69,6 +69,9 @@ python bop_full6dof_eval.py --dataset <ds> --from-export --init-from vggt --out 
 python baselines/run_pi3_init.py --root bop6dof_results/<ds>
 python bop_full6dof_eval.py --dataset <ds> --from-export --init-from pi3 --out bop6dof_results/<ds>
 python bop_full6dof_eval.py --dataset lmo --from-export --occlusion-aware --out bop6dof_results/lmo       # ablation row
+# reduced budget (1/8 of the proposal and beam budgets), first 30 views; bunny on the RTX 2080 Ti worker, dragon locally
+python run_benchmark_compare.py --dataset bunny --num-gt 100 --methods ours_v10_fast --max-views 30
+python run_benchmark_compare.py --dataset dragon --num-gt 100 --methods ours_v10_fast --max-views 30
 # WAPR and Diff-DOPE on the synthetic benchmark (same observations as every method of Tables 1-2)
 python tools/export_synth_frames.py                              # GL world-to-view -> OpenCV, mesh re-centred and scaled to r = 100 mm, fixed initial camera as T0
 python baselines/run_wapr_synth.py --mesh <mesh> --sanity        # from the ground truth (convention check)

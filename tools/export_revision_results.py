@@ -77,7 +77,8 @@ SHORT = {"ours_v10": "Proposed", "ours_v10_noda": "w/o-DA", "ours_v10_geom": "Ge
          "rand_topk_only": "Rand-TopK", "grid_adam": "Grid+Adam", "grid_adam_top16": "Grid+Adam-T16",
          "rand_restart_adam": "RandRestart", "adam_dr": "Adam-DR", "hybrid_dr": "Hybrid-DR",
          "ours_v10_fixedmr": "Fixed-MR", "ours_v10_1shell": "1-shell",
-         "wapr_full": "WAPR (12 hyp.)", "wapr_refine": "WAPR refine", "diffdope": "Diff-DOPE"}
+         "wapr_full": "WAPR (12 hyp.)", "wapr_refine": "WAPR refine", "diffdope": "Diff-DOPE",
+         "ours_v10_fast": "Proposed, 1/8 budget"}
 # near-duplicate baselines shown only in the complete table of the supplement
 MAIN_SKIP = {"grid_adam_top16", "hybrid_dr"}
 # compact names for the 10 pt main table
@@ -314,7 +315,8 @@ def main_table_combined() -> str:
                     f"{pct(sm['sr5'])} & {pct(sm['sr10'])} & {f1(sm['et_r_median'],3)} & {f1(sm['dd_r_median'],3)} & {pct(sm['wrong_shell'])} \\\\"
                 )
             if glines:
-                lines.append(f"\\multicolumn{{8}}{{@{{}}l}}{{\\textit{{{gname}}}}} \\\\")
+                if gname != "Proposed":
+                    lines.append(f"\\multicolumn{{8}}{{@{{}}l}}{{\\textit{{{gname}}}}} \\\\")
                 lines += glines
     lines += ["\\bottomrule", "\\end{tabular}", "\\end{table}"]
     return "\n".join(lines) + "\n"
@@ -518,7 +520,8 @@ def runtime_table() -> str:
              "\\caption{Runtime per view in seconds (wall clock, CUDA-synchronised). On Bunny and Dragon the proposed method and its ablations ran on an RTX~5090 "
              "laptop GPU shared with unrelated jobs and the DR baselines on an RTX~2080\\,Ti (GPU column), so absolute times are comparable only "
              "within a GPU and all times are upper bounds; in the Happy Buddha block the proposed method and the DR baselines ran on the same "
-             "RTX~2080\\,Ti (the same-GPU comparison); WAPR and Diff-DOPE ran on the RTX~5090 in every block. Total: mean / median / P95; stage columns are means. Global = stage~I proposals; "
+             "RTX~2080\\,Ti (the same-GPU comparison); WAPR and Diff-DOPE ran on the RTX~5090 in every block. Proposed, 1/8 budget: $M{=}20$, $S{=}256$, $K{=}8$, $B{=}24$, $L{=}16$ "
+             "(both $MS$ and $KBL$ divided by eight) on the first 30 views, on the RTX~2080\\,Ti for Bunny. Total: mean / median / P95; stage columns are means. Global = stage~I proposals; "
              "DA = stage~II sweeps; local = stage~III beams; select = stage~IV; refine = Adam refinement of the DR baselines.}",
              "\\label{tab:runtime}", "\\footnotesize", "\\setlength{\\tabcolsep}{2.5pt}",
              "\\begin{tabular}{@{}lllcccccccc@{}}", "\\toprule",
@@ -528,7 +531,7 @@ def runtime_table() -> str:
         n = MESHES[d][1]
         block = []
         for gname, lst in GROUPS:
-            for m, _ in lst:
+            for m, _ in (lst + [("ours_v10_fast", "")] if gname == "Proposed" else lst):
                 rows = load_rows(d, n, m) or load_rows(d, 50, m) or load_rows(d, 30, m)
                 if not rows:
                     continue
@@ -626,7 +629,7 @@ def binned_sr_figure(summary: dict) -> None:
         import matplotlib.pyplot as plt
     except Exception:
         return
-    methods = [("ours_v10", "Proposed"), ("ours_v10_noda", "w/o-DA"), ("grid_adam", "Grid+Adam"), ("rand_restart_adam", "RandRestart+Adam"), ("adam_dr", "Adam-DR")]
+    methods = [("ours_v10", "Proposed"), ("ours_v10_noda", "w/o-DA"), ("wapr_full", "WAPR (12 hyp.)"), ("grid_adam", "Grid+Adam"), ("rand_restart_adam", "RandRestart+Adam"), ("adam_dr", "Adam-DR")]
     fig, axes = plt.subplots(2, 2, figsize=(7.2, 5.2))
     for col, d in enumerate(("bunny", "dragon")):
         r_mesh = mesh_radius(d, 100)
@@ -802,7 +805,8 @@ def macros(summary: dict, corr: dict) -> str:
             if "t_median" in s:
                 L.append(m(f"Res{key}Time", f1(s["t_median"], 0)))
         for alt, suffix in (("grid_adam", "Grid"), ("rand_restart_adam", "RR"), ("adam_dr", "Adam"), ("ours_v10_noda", "NoDA"), ("ours_v10_geom", "Geom"), ("greedy_bt_local", "Greedy"), ("rand_topk_only", "TopK"),
-                            ("wapr_full", "WaprFull"), ("wapr_refine", "WaprRef"), ("diffdope", "DiffDope"), ("hybrid_dr", "Hybrid")):
+                            ("wapr_full", "WaprFull"), ("wapr_refine", "WaprRef"), ("diffdope", "DiffDope"), ("hybrid_dr", "Hybrid"),
+                            ("ours_v10_fast", "Fast")):
             s2 = summary.get(d, {}).get(alt, {})
             if s2:
                 L += [m(f"Res{key}{suffix}ER", f1(s2["eR_mean"])), m(f"Res{key}{suffix}SRten", f"{100*s2['sr10']:.0f}"), m(f"Res{key}{suffix}N", str(s2["n"])),
@@ -836,6 +840,46 @@ def macros(summary: dict, corr: dict) -> str:
                   m(f"Res{suffix}CloseN", str(int(close.sum()))),
                   m(f"Res{suffix}CloseSRten", f"{100 * ok[close].mean():.0f}" if close.any() else "--"),
                   m(f"Res{suffix}FarSRten", f"{100 * ok[~close].mean():.0f}" if (~close).any() else "--")]
+    fill_med, all_dr, all_fill, fail_dr, fail_fill = {}, [], [], [], []
+    for d in MESHES:
+        nn = MESHES[d][1]
+        r_d = mesh_radius(d, nn)
+        ours = {row["tag"]: row for row in load_rows(d, nn, "ours_v10")}
+        fills = {}
+        for t in ours:
+            f = RUNS / f"{d}_{nn}gt" / "ours_v10" / t / "gt_refs_search.npz"
+            if f.exists():
+                fills[t] = float((np.load(f)["alpha"] > 0.5).mean())
+        if fills:
+            fill_med[d] = float(np.median(list(fills.values())))
+        for row in load_rows(d, nn, "wapr_full"):
+            t = row["tag"]
+            if t not in ours or t not in fills:
+                continue
+            drv = fl(ours[t], "gt_dist") / r_d
+            all_dr.append(drv)
+            all_fill.append(fills[t])
+            if fl(row, "rot_err_deg") > 10:
+                fail_dr.append(drv)
+                fail_fill.append(fills[t])
+    for d, v in fill_med.items():
+        L.append(m(f"Res{d.capitalize()}FillMed", f"{100 * v:.0f}"))
+    if fail_dr:
+        L += [m("ResWaprFailN", str(len(fail_dr))), m("ResWaprFailDrMed", f"{np.median(fail_dr):.2f}"),
+              m("ResWaprFailFillMed", f"{100 * np.median(fail_fill):.0f}"), m("ResWaprFailInside", str(int(np.sum(np.array(fail_dr) < 1.0)))),
+              m("ResAllDrMed", f"{np.median(all_dr):.2f}"), m("ResAllFillMed", f"{100 * np.median(all_fill):.0f}")]
+    for d in ("bunny", "dragon"):
+        fast = {row["tag"]: row for row in load_rows(d, 100, "ours_v10_fast")}
+        if fast:
+            ref = [row for row in load_rows(d, 100, "ours_v10") if row["tag"] in fast]
+            sref = summarize(ref, mesh_radius(d, 100))
+            key = d.capitalize()
+            L += [m(f"Res{key}FastRefSRten", f"{100 * sref['sr10']:.0f}"), m(f"Res{key}FastRefER", f1(sref["eR_mean"])),
+                  m(f"Res{key}FastRefERmed", f1(sref["eR_median"])), m(f"Res{key}FastRefTime", f1(sref.get("t_median", float("nan")), 0))]
+            rr = [row for row in load_rows(d, 100, "rand_restart_adam") if row["tag"] in fast]
+            if len(rr) == len(fast):
+                srr = summarize(rr, mesh_radius(d, 100))
+                L += [m(f"Res{key}FastRRSRten", f"{100 * srr['sr10']:.0f}"), m(f"Res{key}FastRRTime", f1(srr.get("t_median", float("nan")), 0))]
     ts = transfer_stats("rand_restart_adam")
     if ts:
         L += [m("ResTransferRRdER", f1(ts["dER"])), m("ResTransferRRdERlo", f1(ts["dER_ci"][0])), m("ResTransferRRdERhi", f1(ts["dER_ci"][1])),
@@ -866,6 +910,12 @@ def macros(summary: dict, corr: dict) -> str:
         expected += [f"ResPool{suffix}{x}" for x in ("N", "OursSRten", "SRten", "OnlyOurs", "OnlyOther", "P", "SRlo", "SRhi", "OursSRlo", "OursSRhi")]
     for suffix in ("WaprSanity", "DiffDopeSanity"):
         expected += [f"Res{suffix}{x}" for x in ("N", "SRten", "CloseN", "CloseSRten", "FarSRten")]
+    expected += [f"Res{d.capitalize()}FillMed" for d in MESHES]
+    expected += ["ResWaprFailN", "ResWaprFailDrMed", "ResWaprFailFillMed", "ResWaprFailInside", "ResAllDrMed", "ResAllFillMed"]
+    for d in ("Bunny", "Dragon"):
+        expected += [f"Res{d}Fast{x}" for x in ("ER", "SRten", "N", "DDr", "Wrong", "ERmed", "Time")]
+        expected += [f"Res{d}FastRef{x}" for x in ("SRten", "ER", "ERmed", "Time")]
+        expected += [f"Res{d}FastRR{x}" for x in ("SRten", "Time")]
     L.append("% placeholders (no data yet)")
     for name in expected:
         if ("\\" + name) not in defined:
@@ -879,7 +929,7 @@ def main() -> int:
     for d in MESHES:
         n = MESHES[d][1]
         summary[d] = {}
-        for gname, lst in GROUPS + [("", [("ours_v10_fixedmr", ""), ("ours_v10_1shell", "")])]:
+        for gname, lst in GROUPS + [("", [("ours_v10_fixedmr", ""), ("ours_v10_1shell", ""), ("ours_v10_fast", "")])]:
             for mth, _ in lst:
                 rows = load_rows(d, n, mth) or load_rows(d, 50, mth) or load_rows(d, 30, mth)
                 if rows:

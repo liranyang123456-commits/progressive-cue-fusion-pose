@@ -34,6 +34,7 @@ outputs is included; the GPU runs themselves can be reproduced with the commands
 export VAL_STRICT_NO_GT=1
 python run_revision_queue.py --plan core --workers 2      # bunny / dragon N=100, all methods; ablations; new meshes
 python tools/derive_geom_only.py --run-root benchmark_runs/bunny_100gt   # Geom-only selector (offline, same candidates)
+python run_benchmark_compare.py --dataset bunny --num-gt 100 --methods ours_v10_fast --max-views 30   # 1/8 budget (M=20, S=256, K=8, B=24, L=16); also dragon
 python tools/export_revision_results.py                   # tables/*.tex, results_macros.tex, binned-SR figure
 python tools/make_qualitative_figures.py
 python tools/test_no_gt_leak.py --dataset bunny --methods ours_v10,grid_adam,rand_restart_adam --num-gt 3 --legacy

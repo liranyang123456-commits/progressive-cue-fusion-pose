@@ -103,6 +103,19 @@ METHODS: dict[str, dict[str, str]] = {
         "VAL_BASELINE_PIPELINE": "",
         "VAL_SIL_RENDER_MODE": "nvdiffrast_aa",
     },
+    # reduced budget (accuracy-time trade-off): M=20 shells x S=256 directions, K=8 seeds, beam B=24 x L=16 (~1/8 of v10)
+    "ours_v10_fast": {
+        "VAL_RUN_PROFILE": "v10",
+        "VAL_SEARCH_ENABLE": "0",
+        "VAL_BASELINE_PIPELINE": "",
+        "VAL_SIL_RENDER_MODE": "nvdiffrast_aa",
+        "VAL_RAND_RADIUS_STEPS": "20",
+        "VAL_RAND_SAMPLES_PER_RADIUS": "256",
+        "VAL_RAND_TOPK": "8",
+        "VAL_TOPK": "8",
+        "VAL_LOCAL_BEAM_WIDTH": "24",
+        "VAL_LOCAL_BEAM_LEVELS": "16",
+    },
     # --- nvdiffrast DR baselines (same backend, different silhouette treatment) ---
     "adam_dr": {
         **_DR_ADAM,
