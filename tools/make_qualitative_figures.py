@@ -23,8 +23,42 @@ RUNS = ROOT / "benchmark_runs"
 OUT = ROOT / "manuscript" / "computational_visual_media" / "figures" / "exp"
 MESHES = [("bunny", "Bunny", 100), ("dragon", "Dragon", 100), ("armadillo", "Armadillo", 50), ("happy", "Happy Buddha", 50), ("lucy", "Lucy", 50)]
 BASELINES = [("grid_adam", "Grid+Adam"), ("rand_restart_adam", "RandRestart+Adam"), ("adam_dr", "Adam-DR")]
+SHORT_NAME = {"rand_restart_adam": "RandRestart"}  # tile labels; the caption gives the full names
 TILE = 130  # tile height in px
 FONT = cv2.FONT_HERSHEY_SIMPLEX
+LABEL_PX = 22  # label glyph size; the figure is printed at roughly 0.2-0.25 pt per pixel
+LINE_PX = 24
+FONT_FILES = [r"C:\Windows\Fonts\times.ttf", "/usr/share/fonts/truetype/msttcorefonts/Times_New_Roman.ttf",
+              "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf"]
+
+
+def _ttf(size: int):
+    try:
+        from PIL import ImageFont
+    except ImportError:
+        return None
+    for f in FONT_FILES:
+        if Path(f).exists():
+            return ImageFont.truetype(f, size)
+    return None
+
+
+def put_text(img: np.ndarray, text: str, x: int, y: int, size: int, color, max_w: int | None = None) -> np.ndarray:
+    """Draw text with the document font (Times) if available; colours are BGR like the rest of the script."""
+    font = _ttf(size)
+    if font is None:
+        scale = size / 30.0
+        while max_w and scale > 0.25 and cv2.getTextSize(text, FONT, scale, 1)[0][0] > max_w:
+            scale -= 0.02
+        cv2.putText(img, text, (x, y + size - 4), FONT, scale, color, 1, cv2.LINE_AA)
+        return img
+    from PIL import Image, ImageDraw
+    while max_w and size > 9 and font.getlength(text) > max_w:
+        size -= 1
+        font = _ttf(size)
+    pil = Image.fromarray(img[:, :, ::-1].copy())
+    ImageDraw.Draw(pil).text((x, y), text, font=font, fill=(int(color[2]), int(color[1]), int(color[0])))
+    return np.asarray(pil)[:, :, ::-1].copy()
 
 
 def load_rows(ds: str, n: int, method: str) -> dict[str, dict]:
@@ -94,21 +128,17 @@ def read_tile(path: Path) -> np.ndarray:
 
 
 def label(tile: np.ndarray, text: str, color=(0, 0, 0)) -> np.ndarray:
-    """One or two text lines ('|' separates lines) under the tile, scaled to fit the tile width."""
+    """Text lines ('|' separates lines) under the tile, shrunk only if a line is wider than the tile."""
     lines = text.split("|")
-    bar = np.full((15 * len(lines) + 3, tile.shape[1], 3), 255, np.uint8)
+    bar = np.full((LINE_PX * len(lines) + 4, tile.shape[1], 3), 255, np.uint8)
     for i, ln in enumerate(lines):
-        scale = 0.42
-        while scale > 0.25 and cv2.getTextSize(ln, FONT, scale, 1)[0][0] > tile.shape[1] - 4:
-            scale -= 0.02
-        cv2.putText(bar, ln, (2, 12 + 15 * i), FONT, scale, color, 1, cv2.LINE_AA)
+        bar = put_text(bar, ln, 2, 1 + LINE_PX * i, LABEL_PX, color, max_w=tile.shape[1] - 4)
     return np.vstack([tile, bar])
 
 
-def header(text: str, width: int, h: int = 18) -> np.ndarray:
+def header(text: str, width: int, h: int = 28) -> np.ndarray:
     bar = np.full((h, width, 3), 235, np.uint8)
-    cv2.putText(bar, text, (4, 13), FONT, 0.42, (0, 0, 0), 1, cv2.LINE_AA)
-    return bar
+    return put_text(bar, text, 4, 2, LABEL_PX, (0, 0, 0), max_w=width - 8)
 
 
 def hstack(tiles: list[np.ndarray], gap: int = 4) -> np.ndarray:
@@ -150,10 +180,10 @@ def gallery() -> bool:
             r = ours[t]
             eR = float(r["rot_err_deg"])
             ddr = abs(float(r["dist_err"])) / r_mesh if np.isfinite(r_mesh) and r_mesh > 0 else float("nan")
-            pair = hstack([label(read_tile(d / "gt_rgb.png"), "target"), label(read_tile(d / "best_rgb.png"), f"eR={eR:.2f}|dd/r={ddr:.3f}")], gap=2)
+            pair = hstack([label(read_tile(d / "gt_rgb.png"), "target"), label(read_tile(d / "best_rgb.png"), f"eR = {eR:.2f}|dd/r = {ddr:.3f}")], gap=2)
             tiles.append(pair)
         row = hstack(tiles, gap=10)
-        rows_img.append(vstack([header(f"{disp} (N={len(ours)}): views at the 10/40/70/95 % quantiles of e_R", row.shape[1]), row], gap=2))
+        rows_img.append(vstack([header(f"{disp} (N = {len(ours)}): views at the 10 / 40 / 70 / 95 % quantiles of eR", row.shape[1]), row], gap=2))
     if not rows_img:
         return False
     img = vstack(rows_img, gap=8)
@@ -163,8 +193,9 @@ def gallery() -> bool:
 
 
 def compare() -> bool:
-    rows_img = []
+    blocks = []
     for ds, disp, n in MESHES[:2]:
+        rows_img = []
         ours = load_rows(ds, n, "ours_v10")
         base = {m: load_rows(ds, n, m) for m, _ in BASELINES}
         if not ours or not all(base.values()):
@@ -175,26 +206,29 @@ def compare() -> bool:
         def nfail(t):
             return sum(float(base[m][t]["rot_err_deg"]) > 10 for m, _ in BASELINES)
         hard = sorted([t for t in common if nfail(t) > 0], key=lambda t: (-nfail(t), float(ours[t]["rot_err_deg"])))
-        ours_fail = sorted([t for t in common if float(ours[t]["rot_err_deg"]) > 10], key=lambda t: -float(ours[t]["rot_err_deg"]))
-        picks = hard[:3] + [t for t in ours_fail if t not in hard[:3]][:1]
+        worst = sorted(common, key=lambda t: -float(ours[t]["rot_err_deg"]))
+        picks = hard[:3] + [t for t in worst if t not in hard[:3]][:1]
         if not picks:
             continue
         for t in picks:
             d0 = RUNS / f"{ds}_{n}gt" / "ours_v10" / t
-            tiles = [label(read_tile(d0 / "gt_rgb.png"), f"{disp} {t}|target")]
+            view = t.replace("gt_", "view ")
+            tiles = [label(read_tile(d0 / "gt_rgb.png"), f"{disp}|{view}|target")]
             r = ours[t]
             fm = failure_mode(r, r_mesh)
             col = (0, 128, 0) if fm == "ok" else (0, 0, 200)
-            tiles.append(label(read_tile(d0 / "best_rgb.png"), f"Proposed|eR={float(r['rot_err_deg']):.1f}  {fm}", col))
+            tiles.append(label(read_tile(d0 / "best_rgb.png"), f"Proposed|eR = {float(r['rot_err_deg']):.1f}|{fm}", col))
             for m, mname in BASELINES:
                 rb = base[m][t]
                 fmb = failure_mode(rb, r_mesh)
                 colb = (0, 128, 0) if fmb == "ok" else (0, 0, 200)
-                tiles.append(label(read_tile(RUNS / f"{ds}_{n}gt" / m / t / "best_rgb.png"), f"{mname}|eR={float(rb['rot_err_deg']):.1f}  {fmb}", colb))
+                tiles.append(label(read_tile(RUNS / f"{ds}_{n}gt" / m / t / "best_rgb.png"), f"{SHORT_NAME.get(m, mname)}|eR = {float(rb['rot_err_deg']):.1f}|{fmb}", colb))
             rows_img.append(hstack(tiles, gap=4))
-    if not rows_img:
+        if rows_img:
+            blocks.append(vstack(rows_img, gap=6))
+    if not blocks:
         return False
-    img = vstack(rows_img, gap=6)
+    img = hstack(blocks, gap=24)
     OUT.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(OUT / "fig_results_dense_compare.png"), img)
     return True
