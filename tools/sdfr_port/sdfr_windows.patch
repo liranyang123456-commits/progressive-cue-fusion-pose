@@ -1,0 +1,107 @@
+diff --git a/lib/datasets/MeshDataset.py b/lib/datasets/MeshDataset.py
+index ebdccf4..eac5365 100644
+--- a/lib/datasets/MeshDataset.py
++++ b/lib/datasets/MeshDataset.py
+@@ -25,7 +25,10 @@ import torch
+ from torch.utils.data import Dataset
+ 
+ import numpy as np
+-import mesh2sdf
++try:
++    import mesh2sdf  # noqa: F401
++except ImportError:
++    mesh2sdf = None
+ 
+ from lib.torchgp import load_obj, point_sample, sample_surface, compute_sdf, normalize
+ from lib.PsDebugger import PsDebugger
+diff --git a/lib/extensions/mesh2sdf_cuda/setup.py b/lib/extensions/mesh2sdf_cuda/setup.py
+index f9baf14..4d493b4 100644
+--- a/lib/extensions/mesh2sdf_cuda/setup.py
++++ b/lib/extensions/mesh2sdf_cuda/setup.py
+@@ -1,3 +1,4 @@
++import os
+ from setuptools import setup
+ import torch
+ from torch.utils.cpp_extension import BuildExtension, CUDAExtension
+@@ -21,7 +22,7 @@ setup(
+         CUDAExtension(
+             name='mesh2sdf',
+             sources=['mesh2sdf_kernel.cu'],
+-            extra_compile_args={'cxx': ['-std=c++14', '-ffast-math'], 'nvcc': ['-std=c++14']})
++            extra_compile_args=({'cxx': ['/std:c++17'], 'nvcc': ['-std=c++17']} if os.name == 'nt' else {'cxx': ['-std=c++14', '-ffast-math'], 'nvcc': ['-std=c++14']}))
+     ],
+     cmdclass={
+         'build_ext': BuildExtension
+diff --git a/lib/extensions/sol_nglod/setup.py b/lib/extensions/sol_nglod/setup.py
+index e29a2ce..b33346c 100644
+--- a/lib/extensions/sol_nglod/setup.py
++++ b/lib/extensions/sol_nglod/setup.py
+@@ -37,7 +37,7 @@ setup(
+         CUDAExtension(
+             name='sol_nglod',
+             sources=['sol_nglod_kernel.cu'],
+-            extra_compile_args={'cxx': ['-std=c++14', '-ffast-math'], 'nvcc': ['-std=c++14']})],
++            extra_compile_args=({'cxx': ['/std:c++17'], 'nvcc': ['-std=c++17']} if os.name == 'nt' else {'cxx': ['-std=c++14', '-ffast-math'], 'nvcc': ['-std=c++14']}))],
+     cmdclass={ 'build_ext' : BuildExtension }
+ )
+ 
+diff --git a/lib/models/__init__.py b/lib/models/__init__.py
+index 6401a78..a38fb3f 100644
+--- a/lib/models/__init__.py
++++ b/lib/models/__init__.py
+@@ -22,5 +22,8 @@
+ from .OverfitSDF import OverfitSDF
+ from .BasicDecoder import BasicDecoder
+ from .OctreeSDF import OctreeSDF
+-from .SOL_NGLOD import SOL_NGLOD
++try:
++    from .SOL_NGLOD import SOL_NGLOD
++except ImportError:  # needs the sol_nglod CUDA extension; not used by OctreeSDF
++    SOL_NGLOD = None
+ 
+diff --git a/lib/torchgp/compute_sdf.py b/lib/torchgp/compute_sdf.py
+index 3b8d18b..a3802f6 100644
+--- a/lib/torchgp/compute_sdf.py
++++ b/lib/torchgp/compute_sdf.py
+@@ -21,7 +21,11 @@
+ 
+ import torch
+ import numpy as np
+-import mesh2sdf
++try:
++    import mesh2sdf
++except ImportError:  # SDFR port (Windows, torch 2.11): libigl fast-winding-number SDF, see tools/sdfr_port/README.md
++    mesh2sdf = None
++    import igl
+ 
+ def compute_sdf(
+     V : torch.Tensor,
+@@ -35,6 +39,11 @@ def compute_sdf(
+     mesh_cpu = mesh.cpu().numpy().reshape(-1).astype(np.float64)
+ 
+     # Legacy, open source mesh2sdf code
+-    dist = mesh2sdf.mesh2sdf_gpu(points.contiguous(), mesh)[0]
++    if mesh2sdf is not None:
++        dist = mesh2sdf.mesh2sdf_gpu(points.contiguous(), mesh)[0]
++    else:
++        S, _, _ = igl.signed_distance(points.detach().cpu().numpy().astype(np.float64), V.detach().cpu().numpy().astype(np.float64),
++                                      F.detach().cpu().numpy().astype(np.int64), sign_type=igl.SIGNED_DISTANCE_TYPE_FAST_WINDING_NUMBER)[:3]
++        dist = torch.from_numpy(np.asarray(S, dtype=np.float32)).to(points.device)
+     
+     return dist
+diff --git a/lib/tracer/SphereTracer.py b/lib/tracer/SphereTracer.py
+index 1aa89f0..a73f22b 100644
+--- a/lib/tracer/SphereTracer.py
++++ b/lib/tracer/SphereTracer.py
+@@ -34,7 +34,10 @@ from lib.PsDebugger import PsDebugger
+ 
+ from lib.tracer.BaseTracer import BaseTracer
+ 
+-from sol_nglod import aabb
++try:
++    from sol_nglod import aabb
++except ImportError:  # SDFR port: the sphere tracer renders log images only, which training does not call
++    aabb = None
+ 
+ class SphereTracer(BaseTracer):
+ 

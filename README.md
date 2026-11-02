@@ -58,7 +58,14 @@ python baselines/run_vggt_init.py --root bop6dof_results/lmo                # VG
 python bop_full6dof_eval.py --dataset lmo --init-from vggt
 python baselines/run_pi3_init.py --root bop6dof_results/lmo                 # pi3 environment
 python bop_full6dof_eval.py --dataset lmo --init-from pi3
-python bop_full6dof_eval.py --dataset lmo --occlusion-aware                 # ablation: occlusion-aware silhouette term
+python baselines/run_wid3r_init.py --root bop6dof_results/lmo               # wapr environment + external/Wid3R
+python bop_full6dof_eval.py --dataset lmo --init-from wid3r
+python baselines/run_cam3r_init.py --root bop6dof_results/lmo               # cam3r environment + external/cam3r
+python bop_full6dof_eval.py --dataset lmo --init-from cam3r
+python bop_full6dof_eval.py --dataset lmo --from-export --occlusion-aware --out-suffix _occ   # ablation (margin r/4); also lm, tless
+python tools/compare_occlusion_aware.py
+python baselines/run_sdfr.py --bop lmo                                      # sdfr environment, tools/sdfr_port/README.md; also lm, tless
+python baselines/run_sdfr.py --synth bunny [--sanity]                       # SDFR on the synthetic benchmark (all five meshes)
 python tools/make_scflow2_data.py                                           # SCFlow2 input packages + configs (run SCFlow2 on a CUDA 11 machine, see tools/scflow2_port/README.md)
 python tools/convert_scflow2_results.py --results external/scflow2_results
 python tools/export_bop_results.py

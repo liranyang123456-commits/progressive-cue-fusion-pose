@@ -813,9 +813,9 @@ def main() -> int:
     ap.add_argument("--occ-margin", type=float, default=0.25, help="occluder margin in units of the mesh radius")
     ap.add_argument("--from-export", action="store_true",
                     help="use the exported observation.npz/protocol.json packages in --out instead of the raw BOP test folders")
-    ap.add_argument("--init-from", default="none", choices=["none", "bins", "vggt", "pi3"],
+    ap.add_argument("--init-from", default="none", choices=["none", "bins", "vggt", "pi3", "wid3r", "cam3r"],
                     help="none: full method (stage I-IV); bins: stages II-IV from the exported T0 bins; "
-                         "vggt / pi3: stages II-IV from the foundation-model initialisation in baseline_<model>_init.jsonl")
+                         "vggt / pi3 / wid3r / cam3r: stages II-IV from the foundation-model initialisation in baseline_<model>_init.jsonl")
     args = ap.parse_args()
 
     device = torch.device("cuda")
@@ -843,12 +843,12 @@ def main() -> int:
     print(f"[{ds}] {len(frames)} frames, objects={objects}, rot bins={bins}")
 
     PIPE_ENV["VAL_LOSS_SCALE"] = str(args.loss_scale)
-    global OCCLUSION_AWARE, OCC_MARGIN_R
+    global OCCLUSION_AWARE, OCC_MARGIN_R, OCC_MESH_R_MM
     OCCLUSION_AWARE = bool(args.occlusion_aware)
     OCC_MARGIN_R = float(args.occ_margin)
     results_path = out_root / (f"results{args.out_suffix}.jsonl" if args.init_from == "none" else f"results_init_{args.init_from}{args.out_suffix}.jsonl")
     vggt_inits: dict[str, dict] = {}
-    if args.init_from in ("vggt", "pi3"):
+    if args.init_from in ("vggt", "pi3", "wid3r", "cam3r"):
         vp = out_root / f"baseline_{args.init_from}_init.jsonl"
         if vp.exists():
             for line in vp.read_text(encoding="utf-8").splitlines():
@@ -889,6 +889,7 @@ def main() -> int:
             mesh_c = exp.MeshData(verts=mesh.verts - torch.from_numpy(centre).float().to(device), faces=mesh.faces,
                                   verts_normals=mesh.verts_normals, verts_colors=mesh.verts_colors)
             mesh_r = float(np.max(np.linalg.norm(verts - centre, axis=1)))
+            OCC_MESH_R_MM = mesh_r
             R_gt, t_gt_c = fr.R_gt, fr.R_gt @ centre + fr.t_gt
             obs = make_virtual_obs(fr, size=args.size)
             syms = symmetry_transforms(info)
@@ -963,7 +964,7 @@ def main() -> int:
                         mc = compute_metrics(Rc, tc, R_gt, t_gt_c, fr.K, pts - centre, info, syms)
                         cand_err.append({"loss": c["loss"], "e_R_deg": mc["e_R_deg"], "e_t_mm": mc["e_t_mm"]})
                 rec = {"dataset": ds, "scene_id": scene_id, "im_id": im_id, "obj_id": obj_id, "tag": tag, "method": method_name,
-                       "bin": bin_name, "init_rot_err_deg_this": init_err, "loss_scale": str(args.loss_scale), "lateral": not args.no_lateral, "occlusion_aware": bool(args.occlusion_aware),
+                       "bin": bin_name, "init_rot_err_deg_this": init_err, "loss_scale": str(args.loss_scale), "lateral": not args.no_lateral, "occlusion_aware": bool(args.occlusion_aware), "occ_margin_mm": (OCC_MARGIN_R * mesh_r) if args.occlusion_aware else None,
                    "front_frac": getattr(obs, "front_frac", None),
                        "centre_uv": [float(x) for x in res.pop("centre_uv")] if res.get("centre_uv") is not None else None,
                        "candidates": cand_err,

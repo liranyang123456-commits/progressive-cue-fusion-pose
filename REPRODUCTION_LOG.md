@@ -79,6 +79,17 @@ python baselines/run_wapr_synth.py --mesh <mesh> --mode full     # 12 hypotheses
 python baselines/run_wapr_synth.py --mesh <mesh> --mode refine   # from the fixed initial camera
 python baselines/run_diffdope_synth.py --mesh <mesh>             # from the fixed initial camera (published hyper-parameters)
 python baselines/run_diffdope_synth.py --mesh <mesh> --sanity    # from the ground truth
+# occlusion-aware silhouette term (margin r/4 after the OCC_MESH_R_MM fix), all three datasets, then the paired test
+python bop_full6dof_eval.py --dataset <ds> --from-export --occlusion-aware --out-suffix _occ --out bop6dof_results/<ds>
+python tools/compare_occlusion_aware.py
+# Wid3R / CAM3R initialisation (R1-2), then stages II-IV
+python baselines/run_wid3r_init.py --root bop6dof_results/<ds>     # wapr env, 518x336 as in Wid3R's evaluation code
+python baselines/run_cam3r_init.py --root bop6dof_results/<ds>     # cam3r env (PYTHONIOENCODING=utf-8), most confident (crop, template) pair
+python bop_full6dof_eval.py --dataset <ds> --from-export --init-from wid3r|cam3r --out bop6dof_results/<ds>
+# SDFR (T-RO 2025) on BOP and on the synthetic benchmark (sdfr env; tools/sdfr_port/README.md)
+python tools/sdfr_port/verify_port.py
+python baselines/run_sdfr.py --bop <ds>
+python baselines/run_sdfr.py --synth <mesh> --sanity && python baselines/run_sdfr.py --synth <mesh>
 # SCFlow2 (CUDA 11 worker; tools/scflow2_port/README.md)
 python tools/make_scflow2_data.py                                   # -> external/scflow2_data (BOP layout, image lists, initial_poses/ours_bin*, configs)
 #   worker: scflow2_step1..5.cmd, install the two shims, patch_scflow2_windows.py <checkout>, scflow2_run.cmd
