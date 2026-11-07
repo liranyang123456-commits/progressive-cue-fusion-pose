@@ -121,3 +121,7 @@ python tools/make_qualitative_figures.py
   62 / 42 / 42% against 22 / 7 / 8% from the 90-180 deg bin and 35% for the estimate alone. Diff-DOPE with its RGB term
   (`--rgb`, vertex colours of the LM / LM-O models) from the same T0 bins: lower in every bin (4 of 288 paired runs
   gained, 15 lost). Summary and macros: `tools/analyze_fromours.py` -> `benchmark_results/bop_fromours_summary.json`.
+* Seed priors and the upper hemisphere (11-07): the 20 views on which WAPR's estimator fails, at the 1/8 budget,
+  with the default seed rule (`ours_v10_fast_ref`) and without the two elevation-related priors and with seed bins /
+  anchors symmetric about the equator (`ours_v10_fast_sym`): 19 / 19 solved (median 0.35 / 0.43 deg; full budget 19,
+  WAPR 0), no view changes outcome; the failure in all runs is the flipped Happy Buddha view gt_05.

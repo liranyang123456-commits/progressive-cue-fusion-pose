@@ -75,6 +75,10 @@ python baselines/run_sdfr.py --bop lmo --from-ours                              
 python baselines/run_diffdope_bop.py --root bop6dof_results/lmo --from-ours           # also lm, tless
 python baselines/run_diffdope_bop.py --root bop6dof_results/lmo --rgb                 # LM-O and LM (vertex colours)
 python tools/analyze_fromours.py                                                      # Supplementary Table S11 and its macros
+# hemisphere-agnostic seed ablation on the 20 views where WAPR's estimator fails (1/8 budget)
+python tools/run_prior_ablation.py --method ours_v10_fast_ref                         # default seed rule
+python tools/run_prior_ablation.py --method ours_v10_fast_sym                         # no elevation priors, symmetric bins/anchors
+python tools/analyze_prior_ablation.py
 ```
 
 ## Protocol notes

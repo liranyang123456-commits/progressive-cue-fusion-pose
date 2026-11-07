@@ -1,0 +1,10 @@
+{
+  "method": "stage1+stage2_only",
+  "best_loss": 64.70765973031521,
+  "best_spherical": {
+    "dist": 83.18379767807532,
+    "elev_deg": 28.471576960853746,
+    "azim_deg": 46.2981265153242
+  },
+  "note": "VAL_SEARCH_ENABLE=0: skipped Stage3(Search) and Stage4(Final). best_* are rendered directly from the Stage2 estimate."
+}
