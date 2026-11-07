@@ -13,7 +13,8 @@ outputs is included; the GPU runs themselves can be reproduced with the commands
 | `run_revision_queue.py` | ordered job queue used for the revision runs (strict no-ground-truth protocol) |
 | `tools/test_no_gt_leak.py` | automated ground-truth-leak test: estimates must be bit-identical under a permutation of GT labels with fixed observations |
 | `bop_full6dof_eval.py`, `bop_metrics.py` | full 6-DoF protocol on BOP LM / LM-O / T-LESS (virtual centred camera, roll bank, symmetry-aware ADD(-S) / MSSD / MSPD), perturbed-pose export for refiners, stages II-IV from an initial pose |
-| `baselines/` | WAPR, Diff-DOPE, VGGT- and pi3-initialisation wrappers run on the exported frames |
+| `baselines/` | WAPR, Diff-DOPE, SDFR, FoundationPose, MegaPose, GoTrack, VGGT-, pi3-, Wid3R- and CAM3R-initialisation wrappers run on the exported frames |
+| `tools/wsl/` | environments (PyTorch cu128) and run script for MegaPose (HappyPose) and GoTrack, whose released environments pin CUDA 11 |
 | `tools/make_scflow2_data.py`, `tools/convert_scflow2_results.py`, `tools/scflow2_port/` | SCFlow2 (CVPR 2025) on the same frames and initial poses: data/config export, the CUDA 11 worker scripts, the Windows path patches, the lietorch / scikit-sparse drop-in shims and the result converter (see `tools/scflow2_port/README.md`) |
 | `tools/export_revision_results.py`, `tools/export_bop_results.py`, `tools/make_qualitative_figures.py` | tables, macros and figures of the manuscript |
 | `results/` | per-view metrics (`pose_metrics_summary.csv`), stage timings, BOP `*.jsonl`, leak-test reports |
@@ -79,6 +80,21 @@ python tools/analyze_fromours.py                                                
 python tools/run_prior_ablation.py --method ours_v10_fast_ref                         # default seed rule
 python tools/run_prior_ablation.py --method ours_v10_fast_sym                         # no elevation priors, symmetric bins/anchors
 python tools/analyze_prior_ablation.py
+# re-seeded hypotheses: the lowest-loss pose over the search and the four feed-forward sources, rotated about the
+# principal axes of the mesh (180 deg; +-90 deg), each refined by stages II-IV
+python bop_full6dof_eval.py --dataset lmo --from-export --init-from flip180 --out bop6dof_results/lmo   # also lm, tless
+python bop_full6dof_eval.py --dataset lmo --from-export --init-from flip90 --out bop6dof_results/lmo
+python tools/write_msf_selection.py                       # selection over all hypotheses -> results_msf_select.jsonl
+python baselines/run_wapr_bop.py --root bop6dof_results/lmo --mode refine-from-ours --ours-file results_msf_select.jsonl --out-name baseline_wapr_from_msf.jsonl
+# MegaPose and GoTrack (Linux / WSL 2 Ubuntu, PyTorch cu128): environments, then every protocol on both samples
+bash tools/wsl/setup_envs.sh
+bash tools/wsl/run_baselines.sh
+# FoundationPose's refiner with 20 instead of 5 iterations; second sample; 1/8 budget; paired wide-offset comparison
+python baselines/run_foundationpose_bop.py --root bop6dof_results/lmo --mode refine --bins 60-90,90-180 --iters 20
+python bop_full6dof_eval.py --dataset lmo --objects 1,5,6,8,9,10,11,12 --frames-per-object 5 --seed 2027 --exclude-from bop6dof_results/lmo --out bop6dof_results_second/lmo   # LM, T-LESS: 4 frames per object
+python bop_full6dof_eval.py --dataset lmo --from-export --out bop6dof_results_fast/lmo --budget 1/8
+python tools/analyze_replication.py; python tools/analyze_wide_bin.py; python tools/analyze_fp_iterations.py
+python tools/analyze_fast.py; python tools/analyze_residual_failures.py; python tools/analyze_failure_modes.py
 ```
 
 ## Protocol notes

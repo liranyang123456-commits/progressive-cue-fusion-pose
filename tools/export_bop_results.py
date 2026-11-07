@@ -106,7 +106,14 @@ def load_all(ds: str) -> dict[str, list[dict]]:
                      ("cam3r_init", "baseline_cam3r_init.jsonl"), ("cam3r_ours", "results_init_cam3r.jsonl"),
                      ("ours_full_occ", "results_occ.jsonl"), ("scflow2", "baseline_scflow2.jsonl"), ("sdfr", "baseline_sdfr.jsonl"),
                      ("fp_full", "baseline_foundationpose_full.jsonl"), ("fp_refine", "baseline_foundationpose_refine.jsonl"),
-                     ("fp_refine_t0", "baseline_foundationpose_refine_t0trans.jsonl"), ("ours_fp", "baseline_foundationpose_from_ours.jsonl")):
+                     ("fp_refine_t0", "baseline_foundationpose_refine_t0trans.jsonl"), ("ours_fp", "baseline_foundationpose_from_ours.jsonl"),
+                     ("fp_refine_it20", "baseline_foundationpose_refine_it20.jsonl"),
+                     ("mp_full", "baseline_megapose_full.jsonl"), ("mp_refine", "baseline_megapose_refine.jsonl"),
+                     ("mp_refine_rgb", "baseline_megapose_refine_rgb.jsonl"), ("ours_mp", "baseline_megapose_from_ours.jsonl"),
+                     ("ours_mp_rgb", "baseline_megapose_from_ours_rgb.jsonl"), ("gt_refine", "baseline_gotrack_refine.jsonl"),
+                     ("ours_gt", "baseline_gotrack_from_ours.jsonl"), ("flip180_ours", "results_init_flip180.jsonl"),
+                     ("flip90_ours", "results_init_flip90.jsonl"), ("msf_wapr", "baseline_wapr_from_msf.jsonl"),
+                     ("msf_gt", "baseline_gotrack_from_msf.jsonl")):
         recs = read_jsonl(d / fn)
         # keep the last record per (tag, bin)
         uniq: dict[tuple, dict] = {}
@@ -131,6 +138,24 @@ def load_all(ds: str) -> dict[str, list[dict]]:
         rec["t_total_s"] = sum(float(r.get("t_total_s") or 0.0) + fm_time.get(k, {}).get(tag, 0.0) for k, r in cands)
         ms.append(rec)
     groups["ours_ms"] = ms
+    # + re-seeded hypotheses: the selected pose rotated about the three principal axes of the mesh (180 deg; +-90 deg),
+    # each refined by stages II-IV; the lowest final loss over all hypotheses is kept (no ground truth)
+    flips = {}
+    for g in ("flip180_ours", "flip90_ours"):
+        for r in groups.get(g, []):
+            if "loss" in r:
+                flips.setdefault(r["tag"], []).append(r)
+    if flips:
+        msf = []
+        for r0 in ms:
+            extra = flips.get(r0["tag"], [])
+            best = min([r0] + extra, key=lambda r: float(r["loss"]))
+            rec = dict(best)
+            rec["method"], rec["source"] = "ours_multisource_reseed", best.get("source", best.get("bin"))
+            rec["t_total_s"] = float(r0["t_total_s"]) + sum(float(r.get("t_total_s") or 0.0) for r in extra)
+            rec["n_reseed"] = len(extra)
+            msf.append(rec)
+        groups["ours_msf"] = msf
     return groups
 
 
@@ -210,6 +235,11 @@ def bop_table(all_ds: dict[str, dict[str, list[dict]]]) -> str:
              "Table~\\ref{tab:bop_fminit} refined by stages II--IV (no ground truth), time summed over the five. FoundationPose (CVPR~2024): "
              "released weights, run natively; its refiner from $T_0$ keeps the rotation of $T_0$ and re-initialises the translation from the "
              "depth inside the mask, as its registration does for every hypothesis (SDFR likewise re-centres on the observed points). "
+             "+ FM and re-seeded hypotheses: the selected pose is in addition rotated about the three principal axes of the mesh "
+             "($180^\\circ$, $\\pm90^\\circ$), each rotation refined by stages II--IV, and the lowest final loss over all hypotheses is kept. "
+             "MegaPose (CoRL~2022, HappyPose implementation) and GoTrack (CVPRW~2025): released weights, run in WSL Ubuntu with "
+             "PyTorch~2.11 / CUDA~12.8; MegaPose's coarse network scores its 576-rotation grid placed in the 2D box of the visible mask; "
+             "both refiners start from $T_0$ as given, GoTrack after projecting the rotation of $T_0$ onto SO(3). "
              "The oracle row uses the raw error (the retained candidates store only $e_R$).}",
              "\\label{tab:bop}", "\\footnotesize", "\\setlength{\\tabcolsep}{3.5pt}",
              "\\begin{tabular}{@{}llccccccccc@{}}", "\\toprule",
@@ -233,6 +263,9 @@ def bop_table(all_ds: dict[str, dict[str, list[dict]]]) -> str:
         s = summarize(g.get("ours_ms", []))
         if s:
             block.append(row("\\quad + FM hypotheses, lowest geometric loss", "none", s))
+        s = summarize(g.get("ours_msf", []))
+        if s:
+            block.append(row("\\quad + FM and re-seeded hypotheses", "none", s))
         s = summarize(g.get("ours_wapr", []))
         if s:
             block.append(row("Proposed $\\rightarrow$ WAPR refine", "none", s))
@@ -245,9 +278,17 @@ def bop_table(all_ds: dict[str, dict[str, list[dict]]]) -> str:
         s = summarize(g.get("ours_fp", []))
         if s:
             block.append(row("Proposed $\\rightarrow$ FoundationPose refine", "none", s))
+        for key, name in (("mp_full", "MegaPose (coarse + refine, RGB-D)"), ("ours_mp", "Proposed $\\rightarrow$ MegaPose refine (RGB-D)"),
+                          ("ours_gt", "Proposed $\\rightarrow$ GoTrack (RGB)"),
+                          ("msf_wapr", "Proposed + FM + re-seeded $\\rightarrow$ WAPR refine"),
+                          ("msf_gt", "Proposed + FM + re-seeded $\\rightarrow$ GoTrack")):
+            s = summarize(g.get(key, []))
+            if s:
+                block.append(row(name, "none", s))
         for b in BINS:
             for key, name in (("ours_refine", "Proposed stages II--IV"), ("wapr_refine", "WAPR refine"), ("scflow2", "SCFlow2"), ("diffdope", "Diff-DOPE"),
-                              ("sdfr", "SDFR"), ("fp_refine", "FoundationPose refine")):
+                              ("sdfr", "SDFR"), ("fp_refine", "FoundationPose refine"), ("mp_refine", "MegaPose refine (RGB-D)"),
+                              ("mp_refine_rgb", "MegaPose refine (RGB)"), ("gt_refine", "GoTrack (RGB)")):
                 recs = [r for r in g.get(key, []) if str(r.get("bin")) == b]
                 s = summarize(recs)
                 if s:
@@ -279,14 +320,12 @@ def bop_table_compact(all_ds: dict[str, dict[str, list[dict]]]) -> str:
     """Main-text version: methods as rows, datasets as columns; SR@10 sym. for the initialisation-free rows and per T0 bin for the
     refiners; the time is the median over the frames (and bins) of all three datasets."""
     lines = ["% Auto-generated by tools/export_bop_results.py", "\\begin{table}[!t]", "\\centering",
-             "\\caption{Full 6-DoF object pose on real BOP frames (8 objects per dataset, 104 frames): SR@$10^\\circ$ in \\% with the rotation "
-             "error taken as the minimum over the official BOP object symmetry transforms (raw value in brackets for the initialisation-free "
-             "rows). Initialisation-free methods receive only mask, depth and RGB; + FM hypotheses keeps per frame the lowest final geometric "
-             "loss among the proposed estimate and the four feed-forward initialisations refined by stages II--IV. Refiners start from the "
-             "same perturbed poses $T_0$ in four rotation-error bins. s: median seconds per frame over the three datasets (shared RTX~5090; "
-             "SCFlow2 on an RTX~2080\\,Ti, not comparable; for the combined row the refinement added to the search of the first row). "
-             "Supplementary Table~S7 adds ADD(-S), AR$_{\\mathrm{MSSD}}$, AR$_{\\mathrm{MSPD}}$, medians, confidence intervals and the "
-             "ablation and oracle rows.}",
+             "\\caption{Full 6-DoF object pose on real BOP frames (8 objects per dataset, 104 frames): SR@$10^\\circ$ in \\% under the "
+             "official BOP object symmetries (raw value in brackets for the initialisation-free rows). + FM hypotheses: lowest final "
+             "geometric loss among our estimate and four feed-forward initialisations refined by stages II--IV; + re-seeded: also the "
+             "selection rotated about the principal axes of the mesh. Refiners start from the same $T_0$ in four rotation-error bins. "
+             "s: median seconds per frame (shared RTX~5090; SCFlow2 on an RTX~2080\\,Ti; for the combined row, the refinement added to "
+             "the search). All metrics in Supplementary Table~S7, the second sample in Table~S13.}",
              "\\label{tab:bop}", "\\normalsize", "\\setlength{\\tabcolsep}{4pt}",
              "\\begin{tabular}{@{}lcccc@{}}", "\\toprule",
              "Method & LM-O & LM & T-LESS & s \\\\", "\\midrule",
@@ -321,13 +360,17 @@ def bop_table_compact(all_ds: dict[str, dict[str, list[dict]]]) -> str:
 
     one("\\textbf{Proposed}", "ours_full")
     one("\\quad + FM hypotheses", "ours_ms")
+    one("\\quad + FM and re-seeded hypotheses", "ours_msf")
     one("Proposed $\\rightarrow$ WAPR refine", "ours_wapr")
     one("WAPR, 12 hypotheses", "wapr_full")
     one("FoundationPose", "fp_full")
+    one("MegaPose", "mp_full")
     lines += ["\\midrule", "\\multicolumn{5}{@{}l}{\\textit{Refiners from $T_0$, per bin: $15$--$30$ / $30$--$60$ / $60$--$90$ / $90$--$180^\\circ$}} \\\\"]
     bins("Proposed II--IV", "ours_refine")
     bins("WAPR refine", "wapr_refine")
     bins("FoundationPose refine", "fp_refine")
+    bins("MegaPose refine", "mp_refine")
+    bins("GoTrack", "gt_refine")
     bins("SCFlow2", "scflow2")
     bins("Diff-DOPE", "diffdope")
     bins("SDFR", "sdfr")
@@ -414,7 +457,9 @@ def macros(all_ds) -> str:
                            ("cam3r_init", "Cam"), ("cam3r_ours", "CamOurs"), ("ours_full_occ", "OursOcc"), ("scflow2", "ScflowAll"),
                            ("ours_full_unbal", "OursUnbal"), ("ours_wapr", "OursWapr"), ("diffdope", "DiffDopeAll"), ("wapr_refine", "WaprRefAll"), ("ours_refine", "OursRefAll"),
                            ("sdfr", "SdfrAll"), ("fp_full", "FpFull"), ("ours_fp", "OursFp"), ("fp_refine", "FpRefAll"), ("ours_ms", "OursMs"),
-                           ("fp_refine_t0", "FpRefTzeroAll")):
+                           ("fp_refine_t0", "FpRefTzeroAll"), ("ours_msf", "OursMsf"), ("mp_full", "MpFull"), ("ours_mp", "OursMp"),
+                           ("ours_gt", "OursGt"), ("mp_refine", "MpRefAll"), ("gt_refine", "GtRefAll"), ("msf_wapr", "MsfWapr"),
+                           ("msf_gt", "MsfGt")):
             s = summarize(g.get(mk, []))
             if s:
                 L += [f"\\newcommand{{\\Bop{key}{suffix}SRtenSym}}{{{pct(s['sr10_sym'])}}}", f"\\newcommand{{\\Bop{key}{suffix}SRthirtySym}}{{{pct(s['sr30_sym'])}}}",
@@ -426,7 +471,8 @@ def macros(all_ds) -> str:
         for b in BINS:
             bk = BIN_KEY[b]
             for mk, suffix in (("ours_refine", "OursRef"), ("wapr_refine", "WaprRef"), ("diffdope", "DiffDope"), ("scflow2", "Scflow"), ("sdfr", "Sdfr"),
-                               ("fp_refine", "FpRef"), ("fp_refine_t0", "FpRefTzero")):
+                               ("fp_refine", "FpRef"), ("fp_refine_t0", "FpRefTzero"), ("mp_refine", "MpRef"), ("mp_refine_rgb", "MpRefRgb"),
+                               ("gt_refine", "GtRef")):
                 s = summarize([r for r in g.get(mk, []) if str(r.get("bin")) == b])
                 if s:
                     L += [f"\\newcommand{{\\Bop{key}{suffix}{bk}SRten}}{{{pct(s['sr10'])}}}", f"\\newcommand{{\\Bop{key}{suffix}{bk}ADD}}{{{pct(s['add01'])}}}",

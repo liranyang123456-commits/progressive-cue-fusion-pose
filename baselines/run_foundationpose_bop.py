@@ -51,6 +51,7 @@ def main() -> int:
                          "estimate, as its register() does for every hypothesis (SDFR likewise re-centres on the observed points); "
                          "'protocol' uses the perturbed translation of T0 unchanged")
     ap.add_argument("--max-frames", type=int, default=0)
+    ap.add_argument("--bins", default="", help="refine mode: comma-separated subset of the protocol's rotation bins (default: all)")
     args = ap.parse_args()
 
     sys.path.insert(0, str(FP_DIR))
@@ -71,6 +72,8 @@ def main() -> int:
     out_path = root / OUT_NAME[args.mode]
     if args.mode == "refine" and args.t0_translation == "protocol":
         out_path = root / "baseline_foundationpose_refine_t0trans.jsonl"
+    if args.iters != 5:
+        out_path = out_path.with_name(out_path.stem + f"_it{args.iters}.jsonl")
     ours_init = {}
     if args.mode == "refine-from-ours":
         for line in (root / "results.jsonl").read_text(encoding="utf-8").splitlines():
@@ -100,7 +103,7 @@ def main() -> int:
         if args.mode == "full":
             inits = [{"bin": "none", "rot_err_deg": None}]
         elif args.mode == "refine":
-            inits = proto["inits"]
+            inits = [i for i in proto["inits"] if not args.bins or i["bin"] in args.bins.split(",")]
         else:
             r0 = ours_init.get(tag)
             if r0 is None:

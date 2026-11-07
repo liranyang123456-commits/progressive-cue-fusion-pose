@@ -37,15 +37,25 @@ GROUPS = {
     "ours_sdfr": "baseline_sdfr_from_ours.jsonl",
     "ours_dd": "baseline_diffdope_from_ours.jsonl",
     "ours_fp": "baseline_foundationpose_from_ours.jsonl",
+    "ours_mp": "baseline_megapose_from_ours.jsonl",
+    "ours_gt": "baseline_gotrack_from_ours.jsonl",
+    "msf_wapr": "baseline_wapr_from_msf.jsonl",
+    "msf_gt": "baseline_gotrack_from_msf.jsonl",
     "wapr_refine": "baseline_wapr_refine.jsonl",
     "fp_refine": "baseline_foundationpose_refine.jsonl",
+    "mp_refine": "baseline_megapose_refine.jsonl",
+    "gt_refine": "baseline_gotrack_refine.jsonl",
     "sdfr": "baseline_sdfr.jsonl",
     "diffdope": "baseline_diffdope.jsonl",
     "diffdope_rgb": "baseline_diffdope_rgb.jsonl",
     "scflow2": "baseline_scflow2.jsonl",
 }
-COMBOS = (("ours_wapr", "OursWapr", "WAPR refine"), ("ours_fp", "OursFp", "FoundationPose refine"), ("ours_sdfr", "OursSdfr", "SDFR"), ("ours_dd", "OursDd", "Diff-DOPE"))
-REFINERS = (("wapr_refine", "WaprRef"), ("fp_refine", "Fp"), ("sdfr", "Sdfr"), ("diffdope", "Dd"), ("scflow2", "Scflow"))
+COMBOS = (("ours_wapr", "OursWapr", "WAPR refine"), ("ours_fp", "OursFp", "FoundationPose refine"), ("ours_mp", "OursMp", "MegaPose refine"),
+          ("ours_gt", "OursGt", "GoTrack"), ("ours_sdfr", "OursSdfr", "SDFR"), ("ours_dd", "OursDd", "Diff-DOPE"),
+          ("msf_wapr", "MsfWapr", "WAPR refine, from the selection over all hypotheses"),
+          ("msf_gt", "MsfGt", "GoTrack, from the selection over all hypotheses"))
+REFINERS = (("wapr_refine", "WaprRef"), ("fp_refine", "Fp"), ("mp_refine", "Mp"), ("gt_refine", "Gt"), ("sdfr", "Sdfr"), ("diffdope", "Dd"),
+            ("scflow2", "Scflow"))
 
 
 def load(ds: str, fn: str) -> list[dict]:
@@ -149,6 +159,14 @@ def main() -> int:
         if pool_bin[k]:
             print(f"{k:12s} from T0, 90-180 bin: n={len(pool_bin[k])} SR10sym={100*np.mean(pool_bin[k]):5.1f}%")
             macros.append(f"\\providecommand{{\\BopPool{mk}BinDSRtenSym}}{{{eb.pct(np.mean(pool_bin[k]))}}}")
+    bin_d = [np.mean(v) for v in pool_bin.values() if v]
+    bin_d6 = [np.mean(pool_bin[k]) for k in ("wapr_refine", "fp_refine", "mp_refine", "gt_refine", "sdfr", "diffdope") if pool_bin[k]]
+    from_o = [np.mean(pool[k]) for k, _, _ in COMBOS if pool[k] and not k.startswith("msf_")]
+    if bin_d and from_o:
+        macros += [f"\\providecommand{{\\BopPoolRefBinDMin}}{{{eb.pct(min(bin_d))}}}", f"\\providecommand{{\\BopPoolRefBinDMax}}{{{eb.pct(max(bin_d))}}}",
+                   f"\\providecommand{{\\BopPoolSixBinDMin}}{{{eb.pct(min(bin_d6))}}}", f"\\providecommand{{\\BopPoolSixBinDMax}}{{{eb.pct(max(bin_d6))}}}",
+                   f"\\providecommand{{\\BopPoolFromOursMin}}{{{eb.pct(min(from_o))}}}", f"\\providecommand{{\\BopPoolFromOursMax}}{{{eb.pct(max(from_o))}}}",
+                   f"\\providecommand{{\\BopPoolNRef}}{{{len(bin_d)}}}", f"\\providecommand{{\\BopPoolNFromOurs}}{{{len(from_o)}}}"]
     if rgb_bins:
         print("Diff-DOPE RGB off -> on, pooled LM-O + LM:")
         tg = tl = tn = 0
@@ -169,6 +187,7 @@ def main() -> int:
             "and symmetry handling as Table~\\ref{tab:bop_full}). \\emph{Proposed $\\rightarrow$ X}: refiner X started from the "
             "initialisation-free estimate of the proposed method (stages I--IV) instead of $T_0$; from the $90$--$180^\\circ$ bin the same "
             "refiners reach $\\BopPoolWaprRefBinDSRtenSym\\%$ (WAPR), $\\BopPoolFpBinDSRtenSym\\%$ (FoundationPose), "
+            "$\\BopPoolMpBinDSRtenSym\\%$ (MegaPose, RGB-D), $\\BopPoolGtBinDSRtenSym\\%$ (GoTrack, RGB), "
             "$\\BopPoolSdfrBinDSRtenSym\\%$ (SDFR) and $\\BopPoolDdBinDSRtenSym\\%$ (Diff-DOPE) SR@$10^\\circ$ sym.\\ over the "
             "$\\BopPoolN$ frames (Table~\\ref{tab:bop_full}). \\emph{Diff-DOPE, mask + depth + RGB}: Diff-DOPE from the same $T_0$ bins "
             "with its masked RGB term (vertex colours of the BOP model) enabled from the first iteration in addition to the mask and "

@@ -29,12 +29,18 @@ MAN = ROOT / "manuscript" / "computational_visual_media"
 A, B = ROOT / "bop6dof_results", ROOT / "bop6dof_results_ext"
 KEY = {"lmo": "LMO", "lm": "LM", "tless": "TLESS"}
 INIT_FREE = (("ours_full", "Proposed", "Ours"), ("ours_ms", "\\quad + FM hypotheses", "OursMs"),
-             ("wapr_full", "WAPR, 12 hypotheses", "WaprFull"), ("fp_full", "FoundationPose", "FpFull"))
+             ("ours_msf", "\\quad + FM and re-seeded hypotheses", "OursMsf"),
+             ("wapr_full", "WAPR, 12 hypotheses", "WaprFull"), ("fp_full", "FoundationPose", "FpFull"), ("mp_full", "MegaPose", "MpFull"))
 FROM_OURS = {"ours_wapr": ("WAPR refine", "OursWapr", "baseline_wapr_from_ours.jsonl"),
              "ours_fp": ("FoundationPose refine", "OursFp", "baseline_foundationpose_from_ours.jsonl"),
+             "ours_mp": ("MegaPose refine", "OursMp", "baseline_megapose_from_ours.jsonl"),
+             "ours_gt": ("GoTrack", "OursGt", "baseline_gotrack_from_ours.jsonl"),
              "ours_sdfr": ("SDFR", "OursSdfr", "baseline_sdfr_from_ours.jsonl"),
-             "ours_dd": ("Diff-DOPE", "OursDd", "baseline_diffdope_from_ours.jsonl")}
-REFINERS = (("wapr_refine", "WAPR refine", "WaprRef"), ("fp_refine", "FoundationPose refine", "FpRef"), ("scflow2", "SCFlow2", "Scflow"),
+             "ours_dd": ("Diff-DOPE", "OursDd", "baseline_diffdope_from_ours.jsonl"),
+             "msf_wapr": ("WAPR refine", "MsfWapr", "baseline_wapr_from_msf.jsonl"),
+             "msf_gt": ("GoTrack", "MsfGt", "baseline_gotrack_from_msf.jsonl")}
+REFINERS = (("wapr_refine", "WAPR refine", "WaprRef"), ("fp_refine", "FoundationPose refine", "FpRef"),
+            ("mp_refine", "MegaPose refine", "MpRef"), ("gt_refine", "GoTrack", "GtRef"), ("scflow2", "SCFlow2", "Scflow"),
             ("diffdope", "Diff-DOPE", "Dd"), ("sdfr", "SDFR", "Sdfr"))
 
 
@@ -112,7 +118,8 @@ def main() -> int:
     lines += ["\\midrule", "\\multicolumn{6}{@{}l}{\\textit{Refiners started from the proposed estimate}} \\\\"]
     for key, (name, mk, _) in FROM_OURS.items():
         c, b_, ab, _, _ = cells(key)
-        lines.append(f"Proposed $\\rightarrow$ {name} & {' & '.join(c)} & {b_} & {ab} \\\\")
+        start = "Proposed + FM + re-seeded" if key.startswith("msf_") else "Proposed"
+        lines.append(f"{start} $\\rightarrow$ {name} & {' & '.join(c)} & {b_} & {ab} \\\\")
         macros += [f"\\providecommand{{\\Rep{mk}B}}{{{b_}}}", f"\\providecommand{{\\Rep{mk}AB}}{{{ab}}}"]
         summary[key] = {"B": b_, "AB": ab, "per_ds_B": c}
     for b, lab in (("15-30", "$15$--$30^\\circ$"), ("90-180", "$90$--$180^\\circ$")):

@@ -819,9 +819,11 @@ def main() -> int:
     ap.add_argument("--shard", default="", help="i/n: run every n-th frame starting at i (results file gets a _shard<i>of<n> suffix)")
     ap.add_argument("--exclude-from", default="",
                     help="exported root whose frames are excluded from the selection (draws a disjoint second sample)")
-    ap.add_argument("--init-from", default="none", choices=["none", "bins", "vggt", "pi3", "wid3r", "cam3r"],
+    ap.add_argument("--init-from", default="none", choices=["none", "bins", "vggt", "pi3", "wid3r", "cam3r", "flip180", "flip90"],
                     help="none: full method (stage I-IV); bins: stages II-IV from the exported T0 bins; "
-                         "vggt / pi3 / wid3r / cam3r: stages II-IV from the foundation-model initialisation in baseline_<model>_init.jsonl")
+                         "vggt / pi3 / wid3r / cam3r: stages II-IV from the foundation-model initialisation in baseline_<model>_init.jsonl; "
+                         "flip180 / flip90: stages II-IV from the lowest-loss pose of the multi-source selection (results.jsonl and "
+                         "results_init_<model>.jsonl) rotated about each principal axis of the mesh by 180 deg / by +-90 deg")
     args = ap.parse_args()
 
     device = torch.device("cuda")
@@ -874,9 +876,21 @@ def main() -> int:
                 except Exception:
                     pass
         print(f"[init] {len(vggt_inits)} {args.init_from.upper()} initialisations available")
+    flip_angles = {"flip180": (180.0,), "flip90": (90.0, -90.0)}.get(args.init_from, ())
+    if flip_angles:
+        for fn in ("results.jsonl", "results_init_pi3.jsonl", "results_init_vggt.jsonl", "results_init_wid3r.jsonl", "results_init_cam3r.jsonl"):
+            p = out_root / fn
+            for line in (p.read_text(encoding="utf-8").splitlines() if p.exists() else []):
+                try:
+                    rec_v = json.loads(line)
+                except Exception:
+                    continue
+                if rec_v.get("R_est") and "loss" in rec_v and (rec_v["tag"] not in vggt_inits or rec_v["loss"] < vggt_inits[rec_v["tag"]]["loss"]):
+                    vggt_inits[rec_v["tag"]] = rec_v
+        print(f"[init] {len(vggt_inits)} lowest-loss poses of the multi-source selection, rotations {flip_angles} about the principal axes")
     done = set()
     done_count: dict[tuple, int] = {}
-    need_per_frame = len(args.rot_bins.split(",")) if args.init_from == "bins" else 1
+    need_per_frame = len(args.rot_bins.split(",")) if args.init_from == "bins" else 3 * len(flip_angles) if flip_angles else 1
     if results_path.exists():
         for line in results_path.read_text(encoding="utf-8").splitlines():
             try:
@@ -957,6 +971,14 @@ def main() -> int:
                     continue
                 R0v, t0v = np.array(v["R_est"]), np.array(v["t_est"])
                 init_list = [(args.init_from, R0v, R0v @ centre + t0v, float(v["e_R_deg"]))]
+                if flip_angles:
+                    _, _, axes = np.linalg.svd(verts - centre, full_matrices=False)
+                    init_list = []
+                    for ai, ax in enumerate(axes):
+                        for deg in flip_angles:
+                            Rf = R0v @ cv2.Rodrigues(ax * math.radians(deg))[0]
+                            err = math.degrees(math.acos(float(np.clip((np.trace(Rf.T @ R_gt) - 1) / 2, -1, 1))))
+                            init_list.append((f"a{ai}_{int(deg)}", Rf, R0v @ centre + t0v, err))
             for init in init_list:
                 t_start = time.time()
                 if init is None:

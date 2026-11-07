@@ -12,7 +12,7 @@ BULLETS = [
     "Metric depth hint plus beam search recover far-off camera poses without training.",
     "Theory bounds spurious minima and proves beam width protects the correct basin.",
     "Sub-degree median error on five meshes, more reliable than WAPR on the same views.",
-    "On real frames it lifts four refiners, FoundationPose included, 3-9x beyond 90 deg.",
+    "As a front end it lifts six real-data refiners, GoTrack and MegaPose included.",
 ]
 
 

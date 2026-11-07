@@ -44,6 +44,8 @@ def main() -> int:
                          "refine-from-ours: from the proposed method's estimate in results.jsonl (hypothesis generator + learned refiner)")
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--max-frames", type=int, default=0)
+    ap.add_argument("--ours-file", default="results.jsonl", help="refine-from-ours: file with the starting poses (R_est, t_est per tag)")
+    ap.add_argument("--out-name", default="", help="override the output file name")
     args = ap.parse_args()
 
     import cv2
@@ -57,10 +59,10 @@ def main() -> int:
     frames = sorted([d for d in root.iterdir() if d.is_dir() and (d / "protocol.json").exists()])
     if args.max_frames > 0:
         frames = frames[: args.max_frames]
-    out_path = root / ("baseline_wapr_from_ours.jsonl" if args.mode == "refine-from-ours" else f"baseline_wapr_{args.mode}.jsonl")
+    out_path = root / (args.out_name or ("baseline_wapr_from_ours.jsonl" if args.mode == "refine-from-ours" else f"baseline_wapr_{args.mode}.jsonl"))
     ours_init: dict = {}
     if args.mode == "refine-from-ours":
-        rp = root / "results.jsonl"
+        rp = root / args.ours_file
         for line in rp.read_text(encoding="utf-8").splitlines():
             try:
                 r0 = json.loads(line)

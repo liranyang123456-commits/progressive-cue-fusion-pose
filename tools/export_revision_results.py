@@ -40,6 +40,10 @@ MAN = ROOT / "manuscript" / "computational_visual_media"
 TABLES = MAN / "tables"
 FIGS = MAN / "figures" / "exp"
 RNG = np.random.default_rng(12291)
+LATE_METHODS = {"foundationpose_full", "foundationpose_refine", "foundationpose_sanity"}
+LATE_SEED = 12292
+# tables of the supplementary material (placed with [!htbp]); the others are main-text tables
+SUPP_TABLES = {"tab_results_full.tex", "tab_new_meshes.tex", "tab_runtime.tex", "tab_transfer.tex", "tab_ablation_radius.tex", "tab_corr.tex"}
 
 MESHES = {  # dataset key -> (display, N for main table, radius fallback)
     "bunny": ("Bunny", 100, 0.116616),
@@ -59,6 +63,8 @@ GROUPS = [
     ("Recent methods on the same observations", [
         ("wapr_full", "WAPR, 12 hypotheses"),
         ("wapr_refine", "WAPR refine$^{\\ast}$"),
+        ("foundationpose_full", "FoundationPose (registration)"),
+        ("foundationpose_refine", "FoundationPose refine$^{\\ast}$"),
         ("diffdope", "Diff-DOPE$^{\\ast}$"),
         ("sdfr", "SDFR$^{\\ast}$"),
     ]),
@@ -79,9 +85,10 @@ SHORT = {"ours_v10": "Proposed", "ours_v10_noda": "w/o-DA", "ours_v10_geom": "Ge
          "rand_restart_adam": "RandRestart", "adam_dr": "Adam-DR", "hybrid_dr": "Hybrid-DR",
          "ours_v10_fixedmr": "Fixed-MR", "ours_v10_1shell": "1-shell",
          "wapr_full": "WAPR (12 hyp.)", "wapr_refine": "WAPR refine", "diffdope": "Diff-DOPE", "sdfr": "SDFR",
+         "foundationpose_full": "FoundationPose", "foundationpose_refine": "FoundationPose refine",
          "ours_v10_fast": "Proposed, 1/8 budget"}
-# near-duplicate baselines shown only in the complete table of the supplement
-MAIN_SKIP = {"grid_adam_top16", "hybrid_dr"}
+# near-duplicate baselines, and FoundationPose (added late, page limit), shown only in the complete table of the supplement
+MAIN_SKIP = {"grid_adam_top16", "hybrid_dr", "foundationpose_full", "foundationpose_refine"}
 # compact names for the 10 pt main table
 TAB1_NAME = {"ours_v10": "Proposed", "ours_v10_geom": "Geom-only (no RGB)", "ours_v10_noda": "w/o-DA", "greedy_bt_local": "Greedy-BT + local",
              "rand_topk_only": "Rand-TopK (no beam)", "wapr_full": "WAPR, 12 hyp.", "wapr_refine": "WAPR refine$^{\\ast}$",
@@ -101,6 +108,8 @@ def load_rows(ds: str, n: int, method: str) -> list[dict]:
             if r.get("cam_center_err") in (None, "", "nan"):
                 base = {k: float(r[k]) for k in ("gt_dist", "gt_elev_deg", "gt_azim_deg", "est_dist", "est_elev_deg", "est_azim_deg")}
                 r = {**r, **full_pose_metrics_row(base)}
+            if method in LATE_METHODS:
+                r = {**r, "_late": True}
             out.append(r)
         except Exception:
             continue
@@ -133,6 +142,15 @@ def boot_ci(vals: np.ndarray, stat=np.mean, n_boot: int = 2000, alpha: float = 0
 
 
 def summarize(rows: list[dict], r_mesh: float) -> dict:
+    global RNG
+    if rows and rows[0].get("_late"):
+        # methods added after the tables were published draw their bootstrap from a separate stream, so that the
+        # confidence intervals of every other row stay exactly as reported
+        saved, RNG = RNG, np.random.default_rng(LATE_SEED)
+        try:
+            return summarize([{k: v for k, v in r.items() if k != "_late"} for r in rows], r_mesh)
+        finally:
+            RNG = saved
     if not rows:
         return {}
     eR = np.array([fl(r, "rot_err_deg") for r in rows])
@@ -807,7 +825,7 @@ def macros(summary: dict, corr: dict) -> str:
                 L.append(m(f"Res{key}Time", f1(s["t_median"], 0)))
         for alt, suffix in (("grid_adam", "Grid"), ("rand_restart_adam", "RR"), ("adam_dr", "Adam"), ("ours_v10_noda", "NoDA"), ("ours_v10_geom", "Geom"), ("greedy_bt_local", "Greedy"), ("rand_topk_only", "TopK"),
                             ("wapr_full", "WaprFull"), ("wapr_refine", "WaprRef"), ("diffdope", "DiffDope"), ("sdfr", "Sdfr"), ("hybrid_dr", "Hybrid"),
-                            ("ours_v10_fast", "Fast")):
+                            ("ours_v10_fast", "Fast"), ("foundationpose_full", "FpFull"), ("foundationpose_refine", "FpRef")):
             s2 = summary.get(d, {}).get(alt, {})
             if s2:
                 L += [m(f"Res{key}{suffix}ER", f1(s2["eR_mean"])), m(f"Res{key}{suffix}SRten", f"{100*s2['sr10']:.0f}"), m(f"Res{key}{suffix}N", str(s2["n"])),
@@ -820,14 +838,16 @@ def macros(summary: dict, corr: dict) -> str:
         for name, v in res.items():
             if isinstance(v, dict):
                 L += [m(f"Corr{key}{name.replace('_','')}Rho", f"{v['rho']:.2f}"), m(f"Corr{key}{name.replace('_','')}P", f"{v['p']:.3f}")]
-    for alt, suffix in (("wapr_full", "WaprFull"), ("wapr_refine", "WaprRef"), ("diffdope", "DiffDope"), ("sdfr", "Sdfr")):
+    for alt, suffix in (("wapr_full", "WaprFull"), ("wapr_refine", "WaprRef"), ("diffdope", "DiffDope"), ("sdfr", "Sdfr"),
+                        ("foundationpose_full", "FpFull"), ("foundationpose_refine", "FpRef")):
         ps = pooled_vs("ours_v10", alt)
         if ps:
             L += [m(f"ResPool{suffix}N", str(ps["n"])), m(f"ResPool{suffix}OursSRten", f"{ps['sr_a']:.1f}"), m(f"ResPool{suffix}SRten", f"{ps['sr_b']:.1f}"),
                   m(f"ResPool{suffix}OnlyOurs", str(ps["b"])), m(f"ResPool{suffix}OnlyOther", str(ps["c"])), m(f"ResPool{suffix}P", ps["p_txt"]),
                   m(f"ResPool{suffix}SRlo", f"{ps['sr_b_min']:.0f}"), m(f"ResPool{suffix}SRhi", f"{ps['sr_b_max']:.0f}"),
                   m(f"ResPool{suffix}OursSRlo", f"{ps['sr_a_min']:.0f}"), m(f"ResPool{suffix}OursSRhi", f"{ps['sr_a_max']:.0f}")]
-    for alt, suffix in (("wapr_sanity", "WaprSanity"), ("diffdope_sanity", "DiffDopeSanity"), ("sdfr_sanity", "SdfrSanity")):
+    for alt, suffix in (("wapr_sanity", "WaprSanity"), ("diffdope_sanity", "DiffDopeSanity"), ("sdfr_sanity", "SdfrSanity"),
+                        ("foundationpose_sanity", "FpSanity")):
         ok, close = [], []
         for d in MESHES:
             nn = MESHES[d][1]
@@ -942,6 +962,8 @@ def main() -> int:
                      ("tab_ablation_radius.tex", radius_table), ("tab_runtime.tex", runtime_table), ("tab_transfer.tex", transfer_table),
                      ("tab_corr.tex", lambda: corr_table(corr))):
         txt = fn()
+        if txt and name in SUPP_TABLES:
+            txt = txt.replace("\\begin{table}[!t]", "\\begin{table}[!htbp]").replace("\\begin{table}[t]", "\\begin{table}[!htbp]")
         if txt and "PENDING" not in txt and txt.count("\\\\") >= 2:
             (TABLES / name).write_text(fit_width(txt), encoding="utf-8")
             print(f"[table] {name}")
