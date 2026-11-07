@@ -3,8 +3,8 @@
 """
 Compact qualitative figures for the revised manuscript (built from the strict no-GT runs only).
 
-  fig_results_dense_gallery.png : five meshes x four views sampled at quantiles of the proposed method's e_R
-                                  (10 / 40 / 70 / 95 %), target render next to the estimate render.
+  fig_results_dense_gallery.png : five meshes x four views of the proposed method: the 10 / 40 / 70 % quantiles of e_R
+                                  and the worst view, target render next to the estimate render.
   fig_results_dense_compare.png : hard views; target vs. proposed vs. three DR baselines, every tile annotated
                                   with e_R and the failure mode (wrong shell / flipped view / local minimum).
 
@@ -173,7 +173,7 @@ def gallery() -> bool:
             continue
         r_mesh = mesh_radius(ds, n)
         tags = sorted(ours, key=lambda t: float(ours[t]["rot_err_deg"]))
-        picks = [tags[min(len(tags) - 1, int(q * (len(tags) - 1)))] for q in (0.10, 0.40, 0.70, 0.95)]
+        picks = [tags[min(len(tags) - 1, int(q * (len(tags) - 1)))] for q in (0.10, 0.40, 0.70, 1.00)]
         tiles = []
         for t in picks:
             d = RUNS / f"{ds}_{n}gt" / "ours_v10" / t
@@ -183,7 +183,7 @@ def gallery() -> bool:
             pair = hstack([label(read_tile(d / "gt_rgb.png"), "target"), label(read_tile(d / "best_rgb.png"), f"eR = {eR:.2f}|dd/r = {ddr:.3f}")], gap=2)
             tiles.append(pair)
         row = hstack(tiles, gap=10)
-        rows_img.append(vstack([header(f"{disp} (N = {len(ours)}): views at the 10 / 40 / 70 / 95 % quantiles of eR", row.shape[1]), row], gap=2))
+        rows_img.append(vstack([header(f"{disp} (N = {len(ours)}): views at the 10 / 40 / 70 % quantiles of eR and the worst view", row.shape[1]), row], gap=2))
     if not rows_img:
         return False
     img = vstack(rows_img, gap=8)

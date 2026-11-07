@@ -69,6 +69,12 @@ python baselines/run_sdfr.py --synth bunny [--sanity]                       # SD
 python tools/make_scflow2_data.py                                           # SCFlow2 input packages + configs (run SCFlow2 on a CUDA 11 machine, see tools/scflow2_port/README.md)
 python tools/convert_scflow2_results.py --results external/scflow2_results
 python tools/export_bop_results.py
+# the proposed estimate (results.jsonl) as the starting pose of other refiners, and Diff-DOPE with its RGB term
+python baselines/run_wapr_bop.py --root bop6dof_results/lmo --mode refine-from-ours   # also lm, tless
+python baselines/run_sdfr.py --bop lmo --from-ours                                    # also lm, tless
+python baselines/run_diffdope_bop.py --root bop6dof_results/lmo --from-ours           # also lm, tless
+python baselines/run_diffdope_bop.py --root bop6dof_results/lmo --rgb                 # LM-O and LM (vertex colours)
+python tools/analyze_fromours.py                                                      # Supplementary Table S11 and its macros
 ```
 
 ## Protocol notes

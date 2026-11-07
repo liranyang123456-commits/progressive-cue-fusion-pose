@@ -116,3 +116,8 @@ python tools/make_qualitative_figures.py
   independently of the chosen metric scale (r = 100 / 300 / 1000 mm tried on 8 Bunny views), so r = 100 mm is used for both.
 * pi3 initialisation: LM-O / LM / T-LESS, 12 rendered templates + real crop, float16; refined with stages II-IV
   (`results_init_pi3.jsonl`).
+* Refiners started from the proposed estimate (11-07): WAPR's refiner, SDFR and Diff-DOPE read the stage I-IV estimate
+  from `results.jsonl` in place of T0 (`--mode refine-from-ours` / `--from-ours`); SR@10 sym. over the 104 frames
+  62 / 42 / 42% against 22 / 7 / 8% from the 90-180 deg bin and 35% for the estimate alone. Diff-DOPE with its RGB term
+  (`--rgb`, vertex colours of the LM / LM-O models) from the same T0 bins: lower in every bin (4 of 288 paired runs
+  gained, 15 lost). Summary and macros: `tools/analyze_fromours.py` -> `benchmark_results/bop_fromours_summary.json`.

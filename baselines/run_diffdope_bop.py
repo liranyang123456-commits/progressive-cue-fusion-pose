@@ -13,13 +13,14 @@ geometry only on real data). Units: mesh mm -> cm (scale 0.01), depth cm, as in 
 Run inside the `kaolin` env (nvdiffrast available):
   python baselines/run_diffdope_bop.py --root bop6dof_results/lmo
   python baselines/run_diffdope_bop.py --root bop6dof_results/lmo --sanity   # start from GT, 1 iteration
+  python baselines/run_diffdope_bop.py --root bop6dof_results/lmo --from-ours  # from the proposed method's estimate
 Writes <root>/baseline_diffdope.jsonl (same metric fields as results.jsonl).
 """
 from __future__ import annotations
-import os
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -44,6 +45,10 @@ def main() -> int:
     ap.add_argument("--iters", type=int, default=60)
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--sanity", action="store_true")
+    ap.add_argument("--from-ours", action="store_true",
+                    help="start from the proposed method's estimate in results.jsonl (no T0) instead of the T0 bins")
+    ap.add_argument("--rgb", action="store_true",
+                    help="also enable Diff-DOPE's masked RGB L1 term (vertex colours of the BOP model) from the first iteration")
     ap.add_argument("--max-frames", type=int, default=0)
     args = ap.parse_args()
 
@@ -62,7 +67,17 @@ def main() -> int:
     frames = sorted([d for d in root.iterdir() if d.is_dir() and (d / "protocol.json").exists()])
     if args.max_frames > 0:
         frames = frames[: args.max_frames]
-    out_path = root / ("baseline_diffdope_sanity.jsonl" if args.sanity else "baseline_diffdope.jsonl")
+    if args.from_ours:
+        out_path = root / ("baseline_diffdope_rgb_from_ours.jsonl" if args.rgb else "baseline_diffdope_from_ours.jsonl")
+        ours_init: dict = {}
+        for line in (root / "results.jsonl").read_text(encoding="utf-8").splitlines():
+            try:
+                r0 = json.loads(line)
+                ours_init[r0["tag"]] = r0
+            except Exception:
+                pass
+    else:
+        out_path = root / ("baseline_diffdope_sanity.jsonl" if args.sanity else ("baseline_diffdope_rgb.jsonl" if args.rgb else "baseline_diffdope.jsonl"))
     done = set()  # (tag, bin) pairs already evaluated -> resumable at bin granularity
     if out_path.exists():
         for line in out_path.read_text(encoding="utf-8").splitlines():
@@ -95,7 +110,13 @@ def main() -> int:
         depth_dd = np.flipud(obs["depth"].astype(np.float32) / 100.0).copy()
         seg = np.flipud(np.repeat((obs["mask"] > 0).astype(np.float32)[..., None], 3, axis=-1)).copy()
         R_gt, t_gt = np.array(proto["gt_R"]), np.array(proto["gt_t"])
-        if args.sanity:
+        if args.from_ours:
+            r0 = ours_init.get(tag)
+            if r0 is None:
+                print(f"[skip] {tag}: no estimate of the proposed method")
+                continue
+            inits = [{"bin": "ours", "R0": r0["R_est"], "t0": r0["t_est"], "rot_err_deg": float(r0["e_R_deg"])}]
+        elif args.sanity:
             # ground-truth start plus the mildest exported perturbation: both must end close to the ground truth
             inits = [{"bin": "gt", "R0": R_gt.tolist(), "t0": t_gt.tolist(), "rot_err_deg": 0.0}] + [i for i in proto["inits"] if i["bin"] == "15-30"]
         else:
@@ -107,7 +128,7 @@ def main() -> int:
                 "camera": {"fx": float(K[0, 0]), "fy": float(K[1, 1]), "cx": float(K[0, 2]), "cy": float(K[1, 2]), "im_width": int(W), "im_height": int(H), "znear": 0.1, "zfar": 1000.0},
                 "scene": {"path_img": None, "path_depth": None, "path_segmentation": None, "image_resize": 1.0},
                 "object3d": {"position": [float(x) for x in init["t0"]], "rotation": [float(x) for x in np.array(init["R0"]).reshape(-1)], "model_path": str(ply), "scale": 0.01, "batchsize": args.batch},
-                "losses": {"l1_rgb_with_mask": False, "weight_rgb": 0.7, "l1_depth_with_mask": True, "weight_depth": 1.0, "l1_mask": True, "weight_mask": 1.0},
+                "losses": {"l1_rgb_with_mask": bool(args.rgb), "weight_rgb": 0.7, "l1_depth_with_mask": True, "weight_depth": 1.0, "l1_mask": True, "weight_mask": 1.0},
                 "hyperparameters": {"nb_iterations": int(args.iters), "batchsize": args.batch, "base_lr": 20, "learning_rates_bound": [0.01, 100], "learning_rate_base": 1, "lr_decay": 0.1},
                 "render_images": {"nrow": 4, "final_width_batch": 2000, "add_background": True, "alpha_overlay": 0.7, "add_countour": True, "color_countour": [0.46, 0.73, 0], "flip_result": True, "crop_around_mask": True},
             })
@@ -128,7 +149,7 @@ def main() -> int:
                 t_est = (F @ P_gl[:3, 3]) / 0.01  # cm -> mm
                 met = compute_metrics(R_est, t_est, R_gt, t_gt, K, pts, info, syms)
                 rec = {"tag": tag, "dataset": ds, "scene_id": proto["scene_id"], "im_id": proto["im_id"], "obj_id": obj,
-                       "method": "diffdope", "bin": init["bin"], "init_rot_err_deg": init["rot_err_deg"],
+                       "method": ("ours_then_" if args.from_ours else "") + ("diffdope_rgb" if args.rgb else "diffdope"), "bin": init["bin"], "init_rot_err_deg": init["rot_err_deg"],
                        "R_est": R_est.tolist(), "t_est": t_est.tolist(), "t_total_s": dt, "iters": int(cfg.hyperparameters.nb_iterations), **met}
                 with out_path.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(rec) + "\n")

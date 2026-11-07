@@ -208,7 +208,7 @@ def bop_table(all_ds: dict[str, dict[str, list[dict]]]) -> str:
             block.append(f"\\quad oracle choice among the retained candidates (raw $e_R$) & none & {o['n']} & {f1(o['eR_median'])} & {pct(o['sr10'])} & -- & -- & -- & -- & -- & -- \\\\")
         s = summarize(g.get("ours_wapr", []))
         if s:
-            block.append(row("Proposed stages I--III $\\rightarrow$ WAPR refine", "none", s))
+            block.append(row("Proposed $\\rightarrow$ WAPR refine", "none", s))
         s = summarize(g.get("wapr_full", []))
         if s:
             block.append(row("WAPR (12 hypotheses + refine)", "none", s))
@@ -278,7 +278,7 @@ def bop_table_compact(all_ds: dict[str, dict[str, list[dict]]]) -> str:
                 block.append(f"{name} & {' / '.join(cells)} & {pct(s['add01'])} & {s['ar_mssd']:.2f} & {ftime(s['t_median'])} \\\\")
 
         one("\\textbf{Proposed, no $T_0$}", "ours_full")
-        one("Proposed I--III $\\rightarrow$ WAPR", "ours_wapr")
+        one("Proposed $\\rightarrow$ WAPR refine", "ours_wapr")
         one("WAPR 12 hyp., no $T_0$", "wapr_full")
         bins("Proposed II--IV, $T_0$", "ours_refine")
         bins("WAPR refine, $T_0$", "wapr_refine")

@@ -17,14 +17,15 @@ by t = 1000 t_sdfr - R c (mm).
 
 Run in the `sdfr` env:
   python baselines/run_sdfr.py --bop lmo            # all four T0 bins -> bop6dof_results/lmo/baseline_sdfr.jsonl
+  python baselines/run_sdfr.py --bop lmo --from-ours  # from the proposed method's estimate -> baseline_sdfr_from_ours.jsonl
   python baselines/run_sdfr.py --synth bunny        # fixed initial camera -> benchmark_runs/bunny_100gt/sdfr/
   add --sanity to start from the ground-truth rotation (convention check)
 """
 from __future__ import annotations
-import os
 
 import argparse
 import json
+import os
 import sys
 import time
 import types
@@ -104,13 +105,28 @@ def refine(net, SDFR_adam, pts_mm: np.ndarray, R0, s: float, c_mm: np.ndarray, s
     return R, 1000.0 * t[0].numpy().astype(np.float64) - R @ c_mm
 
 
-def run_bop(ds: str, sanity: bool, max_frames: int) -> None:
+def load_ours(res_dir: Path) -> dict:
+    ours = {}
+    for line in (res_dir / "results.jsonl").read_text(encoding="utf-8").splitlines():
+        try:
+            r0 = json.loads(line)
+            ours[r0["tag"]] = r0
+        except Exception:
+            pass
+    return ours
+
+
+def run_bop(ds: str, sanity: bool, max_frames: int, from_ours: bool = False) -> None:
     import torch
     from bop_metrics import compute_metrics, eval_points_trimesh, load_models_info, symmetry_transforms
     _, _, _, SDFR_adam = sdfr_api()
     root, models, models_eval = BOP[ds]
     res_dir = ROOT / "bop6dof_results" / ds
-    out = res_dir / ("baseline_sdfr_sanity.jsonl" if sanity else "baseline_sdfr.jsonl")
+    if from_ours:
+        out = res_dir / "baseline_sdfr_from_ours.jsonl"
+        ours = load_ours(res_dir)
+    else:
+        out = res_dir / ("baseline_sdfr_sanity.jsonl" if sanity else "baseline_sdfr.jsonl")
     done = set()
     if out.exists():
         for line in out.read_text(encoding="utf-8").splitlines():
@@ -135,7 +151,14 @@ def run_bop(ds: str, sanity: bool, max_frames: int) -> None:
         K = obs["K"].astype(np.float64)
         pts = backproject(obs["depth"], obs["mask"], K)
         R_gt, t_gt = np.array(proto["gt_R"]), np.array(proto["gt_t"])
-        inits = [{"bin": "gt", "R0": R_gt.tolist(), "rot_err_deg": 0.0}] if sanity else proto["inits"]
+        if from_ours:
+            r0 = ours.get(fdir.name)
+            if r0 is None:
+                print(f"[skip] {fdir.name}: no estimate of the proposed method")
+                continue
+            inits = [{"bin": "ours", "R0": r0["R_est"], "t0": r0["t_est"], "rot_err_deg": float(r0["e_R_deg"])}]
+        else:
+            inits = [{"bin": "gt", "R0": R_gt.tolist(), "rot_err_deg": 0.0}] if sanity else proto["inits"]
         for k, ini in enumerate(inits):
             if (fdir.name, ini["bin"]) in done:
                 continue
@@ -148,7 +171,7 @@ def run_bop(ds: str, sanity: bool, max_frames: int) -> None:
             torch.cuda.synchronize(); dt = time.perf_counter() - t0
             met = compute_metrics(R, t, R_gt, t_gt, K, pts_cache[key], info_cache[key], symmetry_transforms(info_cache[key]))
             rec = {"tag": fdir.name, "dataset": ds, "scene_id": proto["scene_id"], "im_id": proto["im_id"], "obj_id": obj,
-                   "method": "sdfr", "bin": ini["bin"], "init_rot_err_deg": ini.get("rot_err_deg"), "n_obs_points": int(len(pts)),
+                   "method": "ours_then_sdfr" if from_ours else "sdfr", "bin": ini["bin"], "init_rot_err_deg": ini.get("rot_err_deg"), "n_obs_points": int(len(pts)),
                    "no_observed_points": bool(no_points),
                    "R_est": R.tolist(), "t_est": t.tolist(), "t_total_s": dt, **met}
             with out.open("a", encoding="utf-8") as f:
@@ -188,10 +211,12 @@ def main() -> int:
     ap.add_argument("--bop", choices=list(BOP.keys()))
     ap.add_argument("--synth")
     ap.add_argument("--sanity", action="store_true")
+    ap.add_argument("--from-ours", action="store_true",
+                    help="BOP only: start from the proposed method's estimate in results.jsonl (no T0) instead of the T0 bins")
     ap.add_argument("--max-frames", type=int, default=0)
     args = ap.parse_args()
     if args.bop:
-        run_bop(args.bop, args.sanity, args.max_frames)
+        run_bop(args.bop, args.sanity, args.max_frames, args.from_ours)
     if args.synth:
         run_synth(args.synth, args.sanity, args.max_frames)
     return 0
