@@ -50,7 +50,7 @@ def sr(recs: list[dict]) -> float:
 
 
 def main() -> int:
-    plt.rcParams.update({"font.family": "serif", "font.serif": ["Times New Roman", "DejaVu Serif"], "font.size": 8,
+    plt.rcParams.update({"pdf.fonttype": 42, "ps.fonttype": 42, "font.family": "serif", "font.serif": ["Times New Roman", "DejaVu Serif"], "font.size": 8,
                          "axes.linewidth": 0.6, "xtick.major.width": 0.6, "ytick.major.width": 0.6})
     fig, axes = plt.subplots(1, 3, figsize=(6.6, 2.35), sharey=True)
     xb = [0, 1, 2, 3]
