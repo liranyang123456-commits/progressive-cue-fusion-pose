@@ -10,6 +10,7 @@ Expected layout (as produced on the worker):  <results>/<ds>_bin<15to30|30to60|6
 Writes bop6dof_results/<ds>/baseline_scflow2.jsonl (method "scflow2_refine").
 """
 from __future__ import annotations
+
 import os
 
 import argparse
@@ -33,6 +34,7 @@ def main() -> int:
     ap.add_argument("--results", required=True)
     ap.add_argument("--data", default=str(ROOT / "external" / "scflow2_data"))
     ap.add_argument("--datasets", default="lmo,lm,tless")
+    ap.add_argument("--res-root", default="bop6dof_results", help="results root holding the exported frame packages")
     args = ap.parse_args()
     res_root, data_root = Path(args.results), Path(args.data)
     for ds in [d.strip() for d in args.datasets.split(",") if d.strip()]:
@@ -40,7 +42,7 @@ def main() -> int:
         mdir, edir = MODELS[ds]
         info_all = load_models_info(BOP / ds / mdir)
         pts_cache, sym_cache = {}, {}
-        out = ROOT / "bop6dof_results" / ds / "baseline_scflow2.jsonl"
+        out = ROOT / args.res_root / ds / "baseline_scflow2.jsonl"
         recs = []
         for key, bname in BINS.items():
             run = res_root / f"{ds}_bin{key}"
@@ -60,7 +62,7 @@ def main() -> int:
                         tag = tag_index.get(f"{scene}_{im}_{obj}")
                         if tag is None:
                             continue
-                        fdir = ROOT / "bop6dof_results" / ds / tag
+                        fdir = ROOT / args.res_root / ds / tag
                         proto = json.loads((fdir / "protocol.json").read_text(encoding="utf-8"))
                         if obj not in pts_cache:
                             pts_cache[obj] = eval_points_trimesh(BOP / ds / edir, BOP / ds / mdir, obj)

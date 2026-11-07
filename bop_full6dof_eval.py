@@ -76,7 +76,7 @@ OCC_MESH_R_MM = 0.0
 # --------------------------------------------------------------------------------------
 # Dataset access
 # --------------------------------------------------------------------------------------
-BOP_ROOT = Path(os.environ.get("BOP_ROOT", os.environ.get("BOP_ROOT", "data/bop")))
+BOP_ROOT = Path(os.environ.get("BOP_ROOT", "data/bop"))
 DATASETS = {
     "lm": {"root": BOP_ROOT / "lm", "test": "test", "models": "models", "models_eval": "models_eval", "depth_scale": 1.0},
     "lmo": {"root": BOP_ROOT / "lmo", "test": "test", "models": "models", "models_eval": "models_eval", "depth_scale": 1.0},
@@ -772,12 +772,13 @@ def selftest(device) -> int:
 # --------------------------------------------------------------------------------------
 # Main evaluation loop
 # --------------------------------------------------------------------------------------
-def select_frames(ds: str, objects: list[int], per_object: int, seed: int) -> list[tuple[int, int, int]]:
+def select_frames(ds: str, objects: list[int], per_object: int, seed: int,
+                  exclude: frozenset = frozenset()) -> list[tuple[int, int, int]]:
     rng = np.random.default_rng(seed)
     targets = list_test_targets(ds)
     out = []
     for obj in objects:
-        cands = sorted({(s, i, o) for (s, i, o) in targets if o == obj})
+        cands = sorted({(s, i, o) for (s, i, o) in targets if o == obj} - exclude)
         if not cands:
             continue
         idx = rng.choice(len(cands), size=min(per_object, len(cands)), replace=False)
@@ -813,6 +814,11 @@ def main() -> int:
     ap.add_argument("--occ-margin", type=float, default=0.25, help="occluder margin in units of the mesh radius")
     ap.add_argument("--from-export", action="store_true",
                     help="use the exported observation.npz/protocol.json packages in --out instead of the raw BOP test folders")
+    ap.add_argument("--budget", default="full", choices=["full", "1/8"],
+                    help="1/8: proposal budget M*S and beam budget K*B*L divided by eight (results file gets a _fast suffix)")
+    ap.add_argument("--shard", default="", help="i/n: run every n-th frame starting at i (results file gets a _shard<i>of<n> suffix)")
+    ap.add_argument("--exclude-from", default="",
+                    help="exported root whose frames are excluded from the selection (draws a disjoint second sample)")
     ap.add_argument("--init-from", default="none", choices=["none", "bins", "vggt", "pi3", "wid3r", "cam3r"],
                     help="none: full method (stage I-IV); bins: stages II-IV from the exported T0 bins; "
                          "vggt / pi3 / wid3r / cam3r: stages II-IV from the foundation-model initialisation in baseline_<model>_init.jsonl")
@@ -833,16 +839,26 @@ def main() -> int:
         if objects:
             frames = [f for f in frames if f[2] in objects]
     else:
-        frames = select_frames(ds, objects, args.frames_per_object, args.seed)
+        exclude = frozenset(select_frames_from_export(Path(args.exclude_from))) if args.exclude_from else frozenset()
+        frames = select_frames(ds, objects, args.frames_per_object, args.seed, exclude)
     if args.frame_stride > 1:
         frames = frames[:: args.frame_stride]
     if args.max_frames > 0:
         frames = frames[: args.max_frames]
+    if args.shard:
+        si, sn = (int(x) for x in args.shard.split("/"))
+        frames = frames[si::sn]
+        args.out_suffix = f"{args.out_suffix}_shard{si}of{sn}"
     bins = [tuple(float(x) for x in b.split("-")) for b in args.rot_bins.split(",")]
     rng = np.random.default_rng(args.seed + 1)
     print(f"[{ds}] {len(frames)} frames, objects={objects}, rot bins={bins}")
 
     PIPE_ENV["VAL_LOSS_SCALE"] = str(args.loss_scale)
+    if args.budget == "1/8":
+        # same reduction as the synthetic ours_v10_fast: M/2 shells x S/4 directions (proposals / 8), K/2 seeds, B/2 x L/2 (beam / 8)
+        PIPE_ENV.update({"VAL_RAND_RADIUS_STEPS": "12", "VAL_RAND_SAMPLES_PER_RADIUS": "128", "VAL_RAND_TOPK": "8", "VAL_TOPK": "8",
+                         "VAL_LOCAL_BEAM_WIDTH": "24", "VAL_LOCAL_BEAM_LEVELS": "16"})
+        args.out_suffix = f"_fast{args.out_suffix}"
     global OCCLUSION_AWARE, OCC_MARGIN_R, OCC_MESH_R_MM
     OCCLUSION_AWARE = bool(args.occlusion_aware)
     OCC_MARGIN_R = float(args.occ_margin)
@@ -964,7 +980,7 @@ def main() -> int:
                         mc = compute_metrics(Rc, tc, R_gt, t_gt_c, fr.K, pts - centre, info, syms)
                         cand_err.append({"loss": c["loss"], "e_R_deg": mc["e_R_deg"], "e_t_mm": mc["e_t_mm"]})
                 rec = {"dataset": ds, "scene_id": scene_id, "im_id": im_id, "obj_id": obj_id, "tag": tag, "method": method_name,
-                       "bin": bin_name, "init_rot_err_deg_this": init_err, "loss_scale": str(args.loss_scale), "lateral": not args.no_lateral, "occlusion_aware": bool(args.occlusion_aware), "occ_margin_mm": (OCC_MARGIN_R * mesh_r) if args.occlusion_aware else None,
+                       "bin": bin_name, "init_rot_err_deg_this": init_err, "loss_scale": str(args.loss_scale), "lateral": not args.no_lateral, "occlusion_aware": bool(args.occlusion_aware),
                    "front_frac": getattr(obs, "front_frac", None),
                        "centre_uv": [float(x) for x in res.pop("centre_uv")] if res.get("centre_uv") is not None else None,
                        "candidates": cand_err,

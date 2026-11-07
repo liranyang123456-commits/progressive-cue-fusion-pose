@@ -23,9 +23,10 @@ Run in the `sdfr` env:
 """
 from __future__ import annotations
 
+import os
+
 import argparse
 import json
-import os
 import sys
 import time
 import types
@@ -116,12 +117,12 @@ def load_ours(res_dir: Path) -> dict:
     return ours
 
 
-def run_bop(ds: str, sanity: bool, max_frames: int, from_ours: bool = False) -> None:
+def run_bop(ds: str, sanity: bool, max_frames: int, from_ours: bool = False, res_root: str = "bop6dof_results") -> None:
     import torch
     from bop_metrics import compute_metrics, eval_points_trimesh, load_models_info, symmetry_transforms
     _, _, _, SDFR_adam = sdfr_api()
     root, models, models_eval = BOP[ds]
-    res_dir = ROOT / "bop6dof_results" / ds
+    res_dir = ROOT / res_root / ds
     if from_ours:
         out = res_dir / "baseline_sdfr_from_ours.jsonl"
         ours = load_ours(res_dir)
@@ -214,9 +215,10 @@ def main() -> int:
     ap.add_argument("--from-ours", action="store_true",
                     help="BOP only: start from the proposed method's estimate in results.jsonl (no T0) instead of the T0 bins")
     ap.add_argument("--max-frames", type=int, default=0)
+    ap.add_argument("--res-root", default="bop6dof_results", help="results root holding the exported frame packages of --bop")
     args = ap.parse_args()
     if args.bop:
-        run_bop(args.bop, args.sanity, args.max_frames, args.from_ours)
+        run_bop(args.bop, args.sanity, args.max_frames, args.from_ours, args.res_root)
     if args.synth:
         run_synth(args.synth, args.sanity, args.max_frames)
     return 0

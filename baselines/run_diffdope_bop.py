@@ -18,9 +18,10 @@ Writes <root>/baseline_diffdope.jsonl (same metric fields as results.jsonl).
 """
 from __future__ import annotations
 
+import os
+
 import argparse
 import json
-import os
 import sys
 import time
 from pathlib import Path

@@ -17,6 +17,7 @@ The tree is then copied to the GPU worker and run with
   python test.py --config configs/ours/<ds>_<bin>.py --checkpoint checkpoints/scflow2_pretrained.pth --save-dir results/ours/<ds>_<bin>
 """
 from __future__ import annotations
+
 import os
 
 import argparse
@@ -189,7 +190,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(ROOT / "external" / "scflow2_data"))
     ap.add_argument("--datasets", default="lmo,lm,tless")
+    ap.add_argument("--res-root", default="bop6dof_results", help="results root holding the exported frame packages")
     args = ap.parse_args()
+    global RES
+    RES = ROOT / args.res_root
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     data = out / "data"

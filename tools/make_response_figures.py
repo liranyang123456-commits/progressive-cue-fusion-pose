@@ -26,11 +26,13 @@ eb.RES = RES
 OUT = ROOT / "manuscript" / "computational_visual_media" / "figures" / "response"
 
 REFINERS = [("baseline_wapr_refine.jsonl", "WAPR refine", "#1f77b4", "o"),
+            ("baseline_foundationpose_refine.jsonl", "FoundationPose refine", "#8c564b", "P"),
             ("baseline_sdfr.jsonl", "SDFR", "#2ca02c", "s"),
             ("baseline_diffdope.jsonl", "Diff-DOPE", "#ff7f0e", "^"),
             ("baseline_scflow2.jsonl", "SCFlow2", "#9467bd", "v"),
             ("results_init_bins.jsonl", "Proposed II-IV (local stages)", "#d62728", "D")]
-FROM_OURS = {"WAPR refine": "baseline_wapr_from_ours.jsonl", "SDFR": "baseline_sdfr_from_ours.jsonl",
+FROM_OURS = {"WAPR refine": "baseline_wapr_from_ours.jsonl", "FoundationPose refine": "baseline_foundationpose_from_ours.jsonl",
+             "SDFR": "baseline_sdfr_from_ours.jsonl",
              "Diff-DOPE": "baseline_diffdope_from_ours.jsonl"}
 
 
@@ -59,6 +61,7 @@ def main() -> int:
         ours = sr(load(ds, "results.jsonl"))
         wapr_full = sr(load(ds, "baseline_wapr_full.jsonl"))
         ax.axhline(wapr_full, color="0.45", ls=":", lw=1.0, zorder=1)
+        ax.axhline(sr(load(ds, "baseline_foundationpose_full.jsonl")), color="#8c564b", ls="-.", lw=0.9, zorder=1)
         ax.axhline(ours, color="k", ls="--", lw=1.0, zorder=1)
         for fn, label, col, mk in REFINERS:
             recs = load(ds, fn)
@@ -80,8 +83,9 @@ def main() -> int:
     fig.text(0.47, 0.035, "initial rotation offset of $T_0$ (deg)", ha="center", fontsize=7.5)
     handles, labels = axes[0].get_legend_handles_labels()
     handles += [plt.Line2D([], [], color="k", ls="--", lw=1.0), plt.Line2D([], [], color="0.45", ls=":", lw=1.0),
+                plt.Line2D([], [], color="#8c564b", ls="-.", lw=0.9),
                 plt.Line2D([], [], color="0.3", marker="*", ms=7.5, mec="k", mew=0.4, ls="none")]
-    labels += ["Proposed, no $T_0$", "WAPR 12 hyp., no $T_0$", "refiner started from the proposed estimate"]
+    labels += ["Proposed, no $T_0$", "WAPR 12 hyp., no $T_0$", "FoundationPose, no $T_0$", "refiner started from the proposed estimate"]
     fig.legend(handles, labels, loc="upper center", ncol=4, fontsize=6.8, frameon=False, bbox_to_anchor=(0.5, 1.02),
                handlelength=2.2, columnspacing=1.2)
     fig.subplots_adjust(left=0.07, right=0.995, bottom=0.2, top=0.79, wspace=0.08)

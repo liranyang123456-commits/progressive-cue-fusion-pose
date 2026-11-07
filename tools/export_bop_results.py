@@ -30,7 +30,7 @@ DATASETS = [("lmo", "LM-O"), ("lm", "LM"), ("tless", "T-LESS")]
 BINS = ["15-30", "30-60", "60-90", "90-180"]
 BIN_KEY = {"15-30": "BinA", "30-60": "BinB", "60-90": "BinC", "90-180": "BinD"}  # LaTeX macro names cannot contain digits
 RNG = np.random.default_rng(12291)
-BOP_ROOT = Path(os.environ.get("BOP_ROOT", os.environ.get("BOP_ROOT", "data/bop")))
+BOP_ROOT = Path(os.environ.get("BOP_ROOT", "data/bop"))
 MODELS_DIR = {"lm": "models", "lmo": "models", "tless": "models_cad"}
 _INFO: dict[str, dict] = {}
 _SYMS: dict[tuple, list] = {}
@@ -104,7 +104,9 @@ def load_all(ds: str) -> dict[str, list[dict]]:
                      ("pi3_init", "baseline_pi3_init.jsonl"), ("pi3_ours", "results_init_pi3.jsonl"),
                      ("wid3r_init", "baseline_wid3r_init.jsonl"), ("wid3r_ours", "results_init_wid3r.jsonl"),
                      ("cam3r_init", "baseline_cam3r_init.jsonl"), ("cam3r_ours", "results_init_cam3r.jsonl"),
-                     ("ours_full_occ", "results_occ.jsonl"), ("scflow2", "baseline_scflow2.jsonl"), ("sdfr", "baseline_sdfr.jsonl")):
+                     ("ours_full_occ", "results_occ.jsonl"), ("scflow2", "baseline_scflow2.jsonl"), ("sdfr", "baseline_sdfr.jsonl"),
+                     ("fp_full", "baseline_foundationpose_full.jsonl"), ("fp_refine", "baseline_foundationpose_refine.jsonl"),
+                     ("fp_refine_t0", "baseline_foundationpose_refine_t0trans.jsonl"), ("ours_fp", "baseline_foundationpose_from_ours.jsonl")):
         recs = read_jsonl(d / fn)
         # keep the last record per (tag, bin)
         uniq: dict[tuple, dict] = {}
@@ -114,6 +116,21 @@ def load_all(ds: str) -> dict[str, list[dict]]:
             uniq[(r.get("tag"), str(r.get("bin", "none")))] = r
         groups[name] = list(uniq.values())
         add_sym_error(ds, groups[name])
+    # hypotheses from several sources, each refined by stages II-IV; per frame the lowest final geometric loss is kept
+    # (no ground truth); time = sum over the sources, including the feed-forward inference of each initialiser
+    fm_time = {k: {r["tag"]: float(r.get("t_total_s") or 0.0) for r in read_jsonl(d / f"baseline_{k}_init.jsonl") if "tag" in r}
+               for k in ("pi3", "vggt", "wid3r", "cam3r")}
+    by_src = {k: {r["tag"]: r for r in groups.get(g, []) if "loss" in r}
+              for k, g in (("ours", "ours_full"), ("pi3", "pi3_ours"), ("vggt", "vggt_ours"), ("wid3r", "wid3r_ours"), ("cam3r", "cam3r_ours"))}
+    ms = []
+    for tag in by_src["ours"]:
+        cands = [(k, by_src[k][tag]) for k in by_src if tag in by_src[k]]
+        k_best, best = min(cands, key=lambda x: float(x[1]["loss"]))
+        rec = dict(best)
+        rec["method"], rec["source"] = "ours_multisource", k_best
+        rec["t_total_s"] = sum(float(r.get("t_total_s") or 0.0) + fm_time.get(k, {}).get(tag, 0.0) for k, r in cands)
+        ms.append(rec)
+    groups["ours_ms"] = ms
     return groups
 
 
@@ -126,16 +143,17 @@ def summarize(recs: list[dict]) -> dict:
     add = np.array([bool(r["add_lt_0.1d"]) for r in recs])
     ar_s = np.array([float(r["ar_mssd"]) for r in recs])
     ar_p = np.array([float(r["ar_mspd"]) for r in recs])
-    tt = np.array([float(r.get("t_total_s", r.get("wall_s", np.nan))) for r in recs])
-    # bootstrap CI for SR@10
+    tt = np.array([float(r["t_total_s"] if r.get("t_total_s") is not None else (r.get("wall_s") or np.nan)) for r in recs])
+    # bootstrap CI for SR@10; a fixed seed per call, so that a row's interval depends on its records only
+    rng = np.random.default_rng(12291)
     boots = []
     for _ in range(2000):
-        idx = RNG.integers(0, len(eR), len(eR))
+        idx = rng.integers(0, len(eR), len(eR))
         boots.append(np.mean(eR[idx] <= 10))
     lo, hi = np.percentile(boots, [2.5, 97.5])
     boots_s = []
     for _ in range(2000):
-        idx = RNG.integers(0, len(eRs), len(eRs))
+        idx = rng.integers(0, len(eRs), len(eRs))
         boots_s.append(np.mean(eRs[idx] <= 10))
     lo_s, hi_s = np.percentile(boots_s, [2.5, 97.5])
     return {"n": int(len(recs)), "eR_median": float(np.median(eR)), "eR_mean": float(eR.mean()), "et_median": float(np.median(et)),
@@ -182,10 +200,16 @@ def bop_table(all_ds: dict[str, dict[str, list[dict]]]) -> str:
              "\\emph{Initialisation-free} methods receive only the mask, depth and RGB crop. \\emph{Refiners} start from the same "
              "perturbed poses $T_0$ in four rotation-error bins (deg) with distance scale in $[0.7,1.4]$ and lateral offset $\\le5\\%$. "
              "$e_R$ / SR@$10^\\circ$: median rotation error (deg) and success rate with the raw rotation error; $e_R^{\\mathrm{sym}}$ / SR@$10^\\circ$ sym.: "
-             "the same with the rotation error taken as the minimum over the object's symmetry transforms listed in \\texttt{models\\_info.json} "
+             "the same with the rotation error taken as the minimum over the official BOP object symmetry transforms "
              "(identity for asymmetric objects; continuous symmetries sampled every $5^\\circ$), with bootstrap 95\\% CI; ADD(-S)$<0.1d$ recall; "
              "BOP average recalls AR$_{\\mathrm{MSSD}}$ and AR$_{\\mathrm{MSPD}}$; median seconds per frame (RTX~5090, shared GPU; "
-             "SCFlow2 on an RTX~2080\\,Ti under its CUDA~11.7 toolchain, so its time is not comparable to the other rows). "
+             "SCFlow2 on an RTX~2080\\,Ti under its CUDA~11.7 toolchain, so its time is not comparable to the other rows); "
+             "for the rows started from the proposed estimate the time is the refinement step added to the search time of the first row; "
+             "Table~\\ref{tab:bop_fromours} adds SDFR and Diff-DOPE started from the proposed estimate. "
+             "+ FM hypotheses: per frame the lowest final geometric loss among the proposed estimate and the four initialisations of "
+             "Table~\\ref{tab:bop_fminit} refined by stages II--IV (no ground truth), time summed over the five. FoundationPose (CVPR~2024): "
+             "released weights, run natively; its refiner from $T_0$ keeps the rotation of $T_0$ and re-initialises the translation from the "
+             "depth inside the mask, as its registration does for every hypothesis (SDFR likewise re-centres on the observed points). "
              "The oracle row uses the raw error (the retained candidates store only $e_R$).}",
              "\\label{tab:bop}", "\\footnotesize", "\\setlength{\\tabcolsep}{3.5pt}",
              "\\begin{tabular}{@{}llccccccccc@{}}", "\\toprule",
@@ -206,14 +230,24 @@ def bop_table(all_ds: dict[str, dict[str, list[dict]]]) -> str:
         o = oracle_summary(g.get("ours_full", []))
         if o:
             block.append(f"\\quad oracle choice among the retained candidates (raw $e_R$) & none & {o['n']} & {f1(o['eR_median'])} & {pct(o['sr10'])} & -- & -- & -- & -- & -- & -- \\\\")
+        s = summarize(g.get("ours_ms", []))
+        if s:
+            block.append(row("\\quad + FM hypotheses, lowest geometric loss", "none", s))
         s = summarize(g.get("ours_wapr", []))
         if s:
             block.append(row("Proposed $\\rightarrow$ WAPR refine", "none", s))
         s = summarize(g.get("wapr_full", []))
         if s:
             block.append(row("WAPR (12 hypotheses + refine)", "none", s))
+        s = summarize(g.get("fp_full", []))
+        if s:
+            block.append(row("FoundationPose (hypotheses + refine + scorer)", "none", s))
+        s = summarize(g.get("ours_fp", []))
+        if s:
+            block.append(row("Proposed $\\rightarrow$ FoundationPose refine", "none", s))
         for b in BINS:
-            for key, name in (("ours_refine", "Proposed stages II--IV"), ("wapr_refine", "WAPR refine"), ("scflow2", "SCFlow2"), ("diffdope", "Diff-DOPE"), ("sdfr", "SDFR")):
+            for key, name in (("ours_refine", "Proposed stages II--IV"), ("wapr_refine", "WAPR refine"), ("scflow2", "SCFlow2"), ("diffdope", "Diff-DOPE"),
+                              ("sdfr", "SDFR"), ("fp_refine", "FoundationPose refine")):
                 recs = [r for r in g.get(key, []) if str(r.get("bin")) == b]
                 s = summarize(recs)
                 if s:
@@ -242,55 +276,63 @@ def ftime(x) -> str:
 
 
 def bop_table_compact(all_ds: dict[str, dict[str, list[dict]]]) -> str:
-    """Main-text version: one row per method and dataset; refiners report SR@10 per T0 bin in one cell."""
+    """Main-text version: methods as rows, datasets as columns; SR@10 sym. for the initialisation-free rows and per T0 bin for the
+    refiners; the time is the median over the frames (and bins) of all three datasets."""
     lines = ["% Auto-generated by tools/export_bop_results.py", "\\begin{table}[!t]", "\\centering",
-             "\\caption{Full 6-DoF object pose on real BOP frames (LM-O, LM, T-LESS; 8 objects per dataset, 104 frames). "
-             "Initialisation-free methods receive only mask, depth and RGB; refiners start from the same perturbed poses $T_0$ in four "
-             "rotation-error bins ($15$--$30$, $30$--$60$, $60$--$90$, $90$--$180^\\circ$). "
-             "SR@$10^\\circ$ in \\% with the rotation error taken as the minimum over the object's symmetry transforms of \\texttt{models\\_info.json} "
-             "(identity for asymmetric objects; raw value in brackets for the initialisation-free rows); refiners started from $T_0$ "
-             "give it per bin ($15$--$30$ / $30$--$60$ / $60$--$90$ / $90$--$180^\\circ$); "
-             "ADD(-S)$<0.1d$ recall over all frames (refiners: all bins); "
-             "AR$_{\\mathrm{MSSD}}$: BOP average recall; s: median seconds per frame (shared RTX~5090; SCFlow2 on an RTX~2080\\,Ti, "
-             "not comparable). Supplementary Table~S7 adds medians, confidence intervals, MSPD and the ablation and oracle rows.}",
-             "\\label{tab:bop}", "\\normalsize", "\\setlength{\\tabcolsep}{3pt}",
+             "\\caption{Full 6-DoF object pose on real BOP frames (8 objects per dataset, 104 frames): SR@$10^\\circ$ in \\% with the rotation "
+             "error taken as the minimum over the official BOP object symmetry transforms (raw value in brackets for the initialisation-free "
+             "rows). Initialisation-free methods receive only mask, depth and RGB; + FM hypotheses keeps per frame the lowest final geometric "
+             "loss among the proposed estimate and the four feed-forward initialisations refined by stages II--IV. Refiners start from the "
+             "same perturbed poses $T_0$ in four rotation-error bins. s: median seconds per frame over the three datasets (shared RTX~5090; "
+             "SCFlow2 on an RTX~2080\\,Ti, not comparable; for the combined row the refinement added to the search of the first row). "
+             "Supplementary Table~S7 adds ADD(-S), AR$_{\\mathrm{MSSD}}$, AR$_{\\mathrm{MSPD}}$, medians, confidence intervals and the "
+             "ablation and oracle rows.}",
+             "\\label{tab:bop}", "\\normalsize", "\\setlength{\\tabcolsep}{4pt}",
              "\\begin{tabular}{@{}lcccc@{}}", "\\toprule",
-             "Method & SR@10$^\\circ$ sym. & ADD(-S) & AR$_{\\mathrm{MSSD}}$ & s \\\\"]
-    any_row = False
-    for ds, disp in DATASETS:
-        g = all_ds.get(ds, {})
-        block = []
+             "Method & LM-O & LM & T-LESS & s \\\\", "\\midrule",
+             "\\multicolumn{5}{@{}l}{\\textit{Initialisation-free (no $T_0$)}} \\\\"]
 
-        def one(name, key):
-            s = summarize(g.get(key, []))
-            if s:
-                block.append(f"{name} & {pct(s['sr10_sym'])} ({pct(s['sr10'])}) & {pct(s['add01'])} & {s['ar_mssd']:.2f} & {ftime(s['t_median'])} \\\\")
+    def pooled_time(recs):
+        tt = [float(r["t_total_s"]) for r in recs if r.get("t_total_s") is not None]
+        return ftime(float(np.median(tt))) if tt else "--"
 
-        def bins(name, key):
-            cells, allr = [], []
+    def one(name, key):
+        cells, allr = [], []
+        for ds, _ in DATASETS:
+            recs = all_ds.get(ds, {}).get(key, [])
+            s = summarize(recs)
+            cells.append(f"{pct(s['sr10_sym'])} ({pct(s['sr10'])})" if s else "--")
+            allr += recs
+        if allr:
+            lines.append(f"{name} & {' & '.join(cells)} & {pooled_time(allr)} \\\\")
+
+    def bins(name, key):
+        cells, allr = [], []
+        for ds, _ in DATASETS:
+            recs = all_ds.get(ds, {}).get(key, [])
+            per = []
             for b in BINS:
-                recs = [r for r in g.get(key, []) if str(r.get("bin")) == b]
-                s = summarize(recs)
-                cells.append(pct(s["sr10_sym"]) if s else "--")
-                allr += recs
-            s = summarize(allr)
-            if s:
-                block.append(f"{name} & {' / '.join(cells)} & {pct(s['add01'])} & {s['ar_mssd']:.2f} & {ftime(s['t_median'])} \\\\")
+                s = summarize([r for r in recs if str(r.get("bin")) == b])
+                per.append(pct(s["sr10_sym"]) if s else "--")
+            cells.append("/".join(per) if recs else "--")
+            allr += recs
+        if allr:
+            lines.append(f"{name} & {' & '.join(cells)} & {pooled_time(allr)} \\\\")
 
-        one("\\textbf{Proposed, no $T_0$}", "ours_full")
-        one("Proposed $\\rightarrow$ WAPR refine", "ours_wapr")
-        one("WAPR 12 hyp., no $T_0$", "wapr_full")
-        bins("Proposed II--IV, $T_0$", "ours_refine")
-        bins("WAPR refine, $T_0$", "wapr_refine")
-        bins("SCFlow2, $T_0$", "scflow2")
-        bins("Diff-DOPE, $T_0$", "diffdope")
-        bins("SDFR, $T_0$", "sdfr")
-        if block:
-            any_row = True
-            lines += ["\\midrule", f"\\multicolumn{{5}}{{@{{}}l}}{{\\textit{{{disp}}}}} \\\\"] + block
+    one("\\textbf{Proposed}", "ours_full")
+    one("\\quad + FM hypotheses", "ours_ms")
+    one("Proposed $\\rightarrow$ WAPR refine", "ours_wapr")
+    one("WAPR, 12 hypotheses", "wapr_full")
+    one("FoundationPose", "fp_full")
+    lines += ["\\midrule", "\\multicolumn{5}{@{}l}{\\textit{Refiners from $T_0$, per bin: $15$--$30$ / $30$--$60$ / $60$--$90$ / $90$--$180^\\circ$}} \\\\"]
+    bins("Proposed II--IV", "ours_refine")
+    bins("WAPR refine", "wapr_refine")
+    bins("FoundationPose refine", "fp_refine")
+    bins("SCFlow2", "scflow2")
+    bins("Diff-DOPE", "diffdope")
+    bins("SDFR", "sdfr")
     lines += ["\\bottomrule", "\\end{tabular}", "\\end{table}"]
-    return ("\n".join(lines) + "\n") if any_row else ""
-
+    return "\n".join(lines) + "\n" if any(all_ds.get(ds, {}).get("ours_full") for ds, _ in DATASETS) else ""
 
 def fminit_table(all_ds: dict[str, dict[str, list[dict]]]) -> str:
     lines = ["% Auto-generated by tools/export_bop_results.py", "\\begin{table}[!t]", "\\centering",
@@ -371,7 +413,8 @@ def macros(all_ds) -> str:
                            ("pi3_init", "Pi"), ("pi3_ours", "PiOurs"), ("wid3r_init", "Wid"), ("wid3r_ours", "WidOurs"),
                            ("cam3r_init", "Cam"), ("cam3r_ours", "CamOurs"), ("ours_full_occ", "OursOcc"), ("scflow2", "ScflowAll"),
                            ("ours_full_unbal", "OursUnbal"), ("ours_wapr", "OursWapr"), ("diffdope", "DiffDopeAll"), ("wapr_refine", "WaprRefAll"), ("ours_refine", "OursRefAll"),
-                           ("sdfr", "SdfrAll")):
+                           ("sdfr", "SdfrAll"), ("fp_full", "FpFull"), ("ours_fp", "OursFp"), ("fp_refine", "FpRefAll"), ("ours_ms", "OursMs"),
+                           ("fp_refine_t0", "FpRefTzeroAll")):
             s = summarize(g.get(mk, []))
             if s:
                 L += [f"\\newcommand{{\\Bop{key}{suffix}SRtenSym}}{{{pct(s['sr10_sym'])}}}", f"\\newcommand{{\\Bop{key}{suffix}SRthirtySym}}{{{pct(s['sr30_sym'])}}}",
@@ -382,7 +425,8 @@ def macros(all_ds) -> str:
                       f"\\newcommand{{\\Bop{key}{suffix}ARmssd}}{{{s['ar_mssd']:.2f}}}", f"\\newcommand{{\\Bop{key}{suffix}Time}}{{{ftime(s['t_median'])}}}"]
         for b in BINS:
             bk = BIN_KEY[b]
-            for mk, suffix in (("ours_refine", "OursRef"), ("wapr_refine", "WaprRef"), ("diffdope", "DiffDope"), ("scflow2", "Scflow"), ("sdfr", "Sdfr")):
+            for mk, suffix in (("ours_refine", "OursRef"), ("wapr_refine", "WaprRef"), ("diffdope", "DiffDope"), ("scflow2", "Scflow"), ("sdfr", "Sdfr"),
+                               ("fp_refine", "FpRef"), ("fp_refine_t0", "FpRefTzero")):
                 s = summarize([r for r in g.get(mk, []) if str(r.get("bin")) == b])
                 if s:
                     L += [f"\\newcommand{{\\Bop{key}{suffix}{bk}SRten}}{{{pct(s['sr10'])}}}", f"\\newcommand{{\\Bop{key}{suffix}{bk}ADD}}{{{pct(s['add01'])}}}",
@@ -438,10 +482,10 @@ def main() -> int:
     all_ds = {ds: load_all(ds) for ds, _ in DATASETS}
     t = bop_table_compact(all_ds)
     (TABLES / "tab_bop.tex").write_text(fit_width(t) if t else stub("tab:bop", "BOP full 6-DoF evaluation: results pending."), encoding="utf-8")
-    tf = bop_table(all_ds).replace("\\label{tab:bop}", "\\label{tab:bop_full}").replace("\\begin{table*}[!t]", "\\begin{table}[!t]").replace("\\end{table*}", "\\end{table}")
-    full = fit_width(tf).replace("{max width=\\linewidth}", "{max width=\\linewidth,max totalheight=0.74\\textheight}", 1) if tf else ""
+    tf = bop_table(all_ds).replace("\\label{tab:bop}", "\\label{tab:bop_full}").replace("\\begin{table*}[!t]", "\\begin{table}[!htbp]").replace("\\end{table*}", "\\end{table}")
+    full = fit_width(tf).replace("{max width=\\linewidth}", "{max width=\\linewidth,max totalheight=0.68\\textheight}", 1) if tf else ""
     (TABLES / "tab_bop_full.tex").write_text(full if tf else stub("tab:bop_full", "BOP full 6-DoF evaluation: results pending."), encoding="utf-8")
-    t2 = fminit_table(all_ds)
+    t2 = fminit_table(all_ds).replace("\\begin{table}[!t]", "\\begin{table}[!htbp]", 1)
     (TABLES / "tab_bop_fminit.tex").write_text(fit_width(t2) if t2 else stub("tab:bop_fminit", "Foundation-model initialisation: results pending."), encoding="utf-8")
     (MAN / "bop_macros.tex").write_text(macros(all_ds), encoding="utf-8")
     summary = {ds: {k: summarize(v) for k, v in g.items() if v} for ds, g in all_ds.items()}
