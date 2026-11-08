@@ -35,6 +35,8 @@ def main() -> int:
             src = {k: ms.load(root, ds, fn) for k, fn in ms.SRC.items()}
             reseed = {k: ms.load(root, ds, fn, bins=True) for k, fn in ms.RESEED.items()}
             bins = ms.load(root, ds, "results_init_bins.jsonl", bins=True)
+            if not bins:  # the probe (stages II-IV from every T0 bin) was run on the first sample only
+                continue
             for tag in src["ours"]:
                 hyps = [src[k][tag] for k in src if tag in src[k]] + [r for k in reseed for r in reseed[k].get(tag, [])]
                 sel = min(hyps, key=lambda r: float(r["loss"]))

@@ -138,33 +138,37 @@ def main() -> int:
             scene.tensor_depth = dd.Image(img_tensor=torch.tensor(depth_dd).float(), flip_img=False, depth=True)
             scene.tensor_segmentation = dd.Image(img_tensor=torch.tensor(seg).float(), flip_img=False)
             scene.path_img = scene.path_depth = scene.path_segmentation = "tensor"  # mark as present
-            try:
-                torch.cuda.synchronize()
-                t0 = time.perf_counter()
-                ddope = dd.DiffDope(cfg=cfg, scene=scene)
-                ddope.run_optimization()
-                P_gl = np.asarray(ddope.get_pose(), dtype=np.float64)
-                torch.cuda.synchronize()
-                dt = time.perf_counter() - t0
-                R_est = F @ P_gl[:3, :3]
-                t_est = (F @ P_gl[:3, 3]) / 0.01  # cm -> mm
-                met = compute_metrics(R_est, t_est, R_gt, t_gt, K, pts, info, syms)
-                rec = {"tag": tag, "dataset": ds, "scene_id": proto["scene_id"], "im_id": proto["im_id"], "obj_id": obj,
-                       "method": ("ours_then_" if args.from_ours else "") + ("diffdope_rgb" if args.rgb else "diffdope"), "bin": init["bin"], "init_rot_err_deg": init["rot_err_deg"],
-                       "R_est": R_est.tolist(), "t_est": t_est.tolist(), "t_total_s": dt, "iters": int(cfg.hyperparameters.nb_iterations), **met}
-                with out_path.open("a", encoding="utf-8") as f:
-                    f.write(json.dumps(rec) + "\n")
-                print(f"[{tag}] bin {init['bin']:>7} init={init['rot_err_deg']:5.1f} -> e_R={met['e_R_deg']:5.1f} e_t={met['e_t_mm']:6.1f} ADD(-S)={met['add_s_metric']:6.1f} {dt:.1f}s", flush=True)
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                print(f"[error] {tag} {init['bin']}: {e}", flush=True)
-            finally:
+            # the first call of a process may fail while Diff-DOPE JIT-compiles its transform plugin (no ninja on PATH);
+            # it then falls back to its PyTorch path, so the same run is attempted once more
+            for attempt in (1, 2):
                 try:
-                    del ddope
-                except Exception:
-                    pass
-                torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                    t0 = time.perf_counter()
+                    ddope = dd.DiffDope(cfg=cfg, scene=scene)
+                    ddope.run_optimization()
+                    P_gl = np.asarray(ddope.get_pose(), dtype=np.float64)
+                    torch.cuda.synchronize()
+                    dt = time.perf_counter() - t0
+                    R_est = F @ P_gl[:3, :3]
+                    t_est = (F @ P_gl[:3, 3]) / 0.01  # cm -> mm
+                    met = compute_metrics(R_est, t_est, R_gt, t_gt, K, pts, info, syms)
+                    rec = {"tag": tag, "dataset": ds, "scene_id": proto["scene_id"], "im_id": proto["im_id"], "obj_id": obj,
+                           "method": ("ours_then_" if args.from_ours else "") + ("diffdope_rgb" if args.rgb else "diffdope"), "bin": init["bin"], "init_rot_err_deg": init["rot_err_deg"],
+                           "R_est": R_est.tolist(), "t_est": t_est.tolist(), "t_total_s": dt, "iters": int(cfg.hyperparameters.nb_iterations), **met}
+                    with out_path.open("a", encoding="utf-8") as f:
+                        f.write(json.dumps(rec) + "\n")
+                    print(f"[{tag}] bin {init['bin']:>7} init={init['rot_err_deg']:5.1f} -> e_R={met['e_R_deg']:5.1f} e_t={met['e_t_mm']:6.1f} ADD(-S)={met['add_s_metric']:6.1f} {dt:.1f}s", flush=True)
+                    break
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    print(f"[error] {tag} {init['bin']} (attempt {attempt}): {e}", flush=True)
+                finally:
+                    try:
+                        del ddope
+                    except Exception:
+                        pass
+                    torch.cuda.empty_cache()
     print(f"[done] {out_path}")
     return 0
 
