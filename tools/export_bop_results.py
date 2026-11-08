@@ -113,7 +113,8 @@ def load_all(ds: str) -> dict[str, list[dict]]:
                      ("ours_mp_rgb", "baseline_megapose_from_ours_rgb.jsonl"), ("gt_refine", "baseline_gotrack_refine.jsonl"),
                      ("ours_gt", "baseline_gotrack_from_ours.jsonl"), ("flip180_ours", "results_init_flip180.jsonl"),
                      ("flip90_ours", "results_init_flip90.jsonl"), ("msf_wapr", "baseline_wapr_from_msf.jsonl"),
-                     ("msf_gt", "baseline_gotrack_from_msf.jsonl")):
+                     ("msf_gt", "baseline_gotrack_from_msf.jsonl"), ("msf_icp", "results_msf_icp.jsonl"),
+                     ("ours_icp", "results_ours_icp.jsonl"), ("msf_s384", "results_init_msf_s384.jsonl")):
         recs = read_jsonl(d / fn)
         # keep the last record per (tag, bin)
         uniq: dict[tuple, dict] = {}
@@ -266,6 +267,11 @@ def bop_table(all_ds: dict[str, dict[str, list[dict]]]) -> str:
         s = summarize(g.get("ours_msf", []))
         if s:
             block.append(row("\\quad + FM and re-seeded hypotheses", "none", s))
+        for key, name in (("msf_icp", "\\quad\\quad + depth ICP polish"), ("msf_s384", "\\quad\\quad + stages II--IV at a $384^2$ crop"),
+                          ("ours_icp", "\\quad depth ICP polish of the search alone")):
+            s = summarize(g.get(key, []))
+            if s:
+                block.append(row(name, "none", s))
         s = summarize(g.get("ours_wapr", []))
         if s:
             block.append(row("Proposed $\\rightarrow$ WAPR refine", "none", s))
@@ -323,7 +329,8 @@ def bop_table_compact(all_ds: dict[str, dict[str, list[dict]]]) -> str:
              "\\caption{Full 6-DoF object pose on real BOP frames (8 objects per dataset, 104 frames): SR@$10^\\circ$ in \\% under the "
              "official BOP object symmetries (raw value in brackets for the initialisation-free rows). + FM hypotheses: lowest final "
              "geometric loss among our estimate and four feed-forward initialisations refined by stages II--IV; + re-seeded: also the "
-             "selection rotated about the principal axes of the mesh. Refiners start from the same $T_0$ in four rotation-error bins. "
+             "selection rotated about the principal axes of the mesh; + depth ICP: of the masked depth, from the selection. "
+             "Refiners start from the same $T_0$ in four rotation-error bins. "
              "s: median seconds per frame (shared RTX~5090; SCFlow2 on an RTX~2080\\,Ti; for the combined row, the refinement added to "
              "the search). All metrics in Supplementary Table~S7, the second sample in Table~S13.}",
              "\\label{tab:bop}", "\\normalsize", "\\setlength{\\tabcolsep}{4pt}",
@@ -361,6 +368,7 @@ def bop_table_compact(all_ds: dict[str, dict[str, list[dict]]]) -> str:
     one("\\textbf{Proposed}", "ours_full")
     one("\\quad + FM hypotheses", "ours_ms")
     one("\\quad + FM and re-seeded hypotheses", "ours_msf")
+    one("\\quad\\quad + depth ICP polish", "msf_icp")
     one("Proposed $\\rightarrow$ WAPR refine", "ours_wapr")
     one("WAPR, 12 hypotheses", "wapr_full")
     one("FoundationPose", "fp_full")
@@ -459,7 +467,7 @@ def macros(all_ds) -> str:
                            ("sdfr", "SdfrAll"), ("fp_full", "FpFull"), ("ours_fp", "OursFp"), ("fp_refine", "FpRefAll"), ("ours_ms", "OursMs"),
                            ("fp_refine_t0", "FpRefTzeroAll"), ("ours_msf", "OursMsf"), ("mp_full", "MpFull"), ("ours_mp", "OursMp"),
                            ("ours_gt", "OursGt"), ("mp_refine", "MpRefAll"), ("gt_refine", "GtRefAll"), ("msf_wapr", "MsfWapr"),
-                           ("msf_gt", "MsfGt")):
+                           ("msf_gt", "MsfGt"), ("msf_icp", "MsfIcp"), ("ours_icp", "OursIcp"), ("msf_s384", "MsfSbig")):
             s = summarize(g.get(mk, []))
             if s:
                 L += [f"\\newcommand{{\\Bop{key}{suffix}SRtenSym}}{{{pct(s['sr10_sym'])}}}", f"\\newcommand{{\\Bop{key}{suffix}SRthirtySym}}{{{pct(s['sr30_sym'])}}}",

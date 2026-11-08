@@ -30,6 +30,7 @@ A, B = ROOT / "bop6dof_results", ROOT / "bop6dof_results_ext"
 KEY = {"lmo": "LMO", "lm": "LM", "tless": "TLESS"}
 INIT_FREE = (("ours_full", "Proposed", "Ours"), ("ours_ms", "\\quad + FM hypotheses", "OursMs"),
              ("ours_msf", "\\quad + FM and re-seeded hypotheses", "OursMsf"),
+             ("msf_icp", "\\quad\\quad + depth ICP polish", "MsfIcp"),
              ("wapr_full", "WAPR, 12 hypotheses", "WaprFull"), ("fp_full", "FoundationPose", "FpFull"), ("mp_full", "MegaPose", "MpFull"))
 FROM_OURS = {"ours_wapr": ("WAPR refine", "OursWapr", "baseline_wapr_from_ours.jsonl"),
              "ours_fp": ("FoundationPose refine", "OursFp", "baseline_foundationpose_from_ours.jsonl"),

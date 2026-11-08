@@ -150,6 +150,52 @@ def main() -> int:
                        f"\\providecommand{{\\MsPool{k}P}}{{{'<0.001' if p < 0.001 else f'={p:.2f}'}}}"]
         print(f"  {k:7s} SR@10 sym {sr:5.1f}% ({nsel}/{n})  oracle {ora:5.1f}% ({nora})  ADD(-S) {100.0 * np.mean(d['add']):5.1f}%  "
               f"median time {np.median(d['t']):6.0f} s" + (f"  vs ours: +{pairs[k][0]} / -{pairs[k][1]}" if k != "Ours" else ""))
+    # depth ICP polish (tools/icp_polish.py) of the selection over all hypotheses and of the search alone, compared with
+    # the pose it starts from
+    icp = {"n": 0, "ok": 0, "gain": 0, "loss": 0, "ours_ok": 0, "ours_n": 0}
+
+    def load_any(res: Path, ds: str, fn: str) -> dict:  # polished records carry no loss
+        eb.RES = res
+        recs = [r for r in eb.read_jsonl(res / ds / fn) if "e_R_deg" in r]
+        eb.add_sym_error(ds, recs)
+        return {r["tag"]: r for r in recs}
+
+    for ds, name in eb.DATASETS:
+        n_ds = ok_ds = 0
+        for res in roots:
+            if not (res / ds / "results_msf_icp.jsonl").exists():
+                continue
+            base = load_any(res, ds, "results_msf_select.jsonl")
+            pol = load_any(res, ds, "results_msf_icp.jsonl")
+            for tag, r in pol.items():
+                if tag not in base:
+                    continue
+                a, b = base[tag]["e_R_sym_deg"] <= 10, r["e_R_sym_deg"] <= 10
+                icp["n"] += 1
+                icp["ok"] += b
+                icp["gain"] += int(b and not a)
+                icp["loss"] += int(a and not b)
+                n_ds += 1
+                ok_ds += b
+            for r in load_any(res, ds, "results_ours_icp.jsonl").values():
+                icp["ours_n"] += 1
+                icp["ours_ok"] += r["e_R_sym_deg"] <= 10
+            for r in load_any(res, ds, "results_init_msf_s384.jsonl").values():  # stages II-IV again at a 384^2 crop
+                icp["s384_n"] = icp.get("s384_n", 0) + 1
+                icp["s384_ok"] = icp.get("s384_ok", 0) + (r["e_R_sym_deg"] <= 10)
+        if n_ds:
+            summary[name]["Icp"] = 100.0 * ok_ds / n_ds
+            macros.append(f"\\providecommand{{\\Ms{KEY[ds]}IcpSR}}{{{100.0 * ok_ds / n_ds:.0f}}}")
+    if icp["n"]:
+        p = mcnemar(icp["gain"], icp["loss"])
+        summary["pooled"]["Icp"] = {k: v for k, v in icp.items()}
+        macros += [f"\\providecommand{{\\MsPoolIcpSR}}{{{100.0 * icp['ok'] / icp['n']:.0f}}}",
+                   f"\\providecommand{{\\MsPoolIcpGain}}{{{icp['gain']}}}", f"\\providecommand{{\\MsPoolIcpLoss}}{{{icp['loss']}}}",
+                   f"\\providecommand{{\\MsPoolIcpP}}{{{'<0.001' if p < 0.001 else f'={p:.2f}' if p >= 0.01 else f'={p:.3f}'}}}",
+                   f"\\providecommand{{\\MsPoolOursIcpSR}}{{{100.0 * icp['ours_ok'] / max(1, icp['ours_n']):.0f}}}",
+                   f"\\providecommand{{\\MsPoolSbigSR}}{{{100.0 * icp.get('s384_ok', 0) / max(1, icp.get('s384_n', 0)):.0f}}}"]
+        print(f"  depth ICP of the selection: {100.0 * icp['ok'] / icp['n']:.1f}% (+{icp['gain']}/-{icp['loss']}, p={p:.3f}); "
+              f"of the search alone: {100.0 * icp['ours_ok'] / max(1, icp['ours_n']):.1f}%")
     (MAN / "multisource_macros.tex").write_text("\n".join(macros) + "\n", encoding="utf-8")
     names = {"Ours": "Proposed (search, stages I--IV)", "OursPi": "\\quad + $\\pi^3$ hypothesis",
              "OursFm": "\\quad + $\\pi^3$, VGGT, Wid3R, CAM3R hypotheses", "FmOnly": "four feed-forward hypotheses, no search",
@@ -162,7 +208,8 @@ def main() -> int:
           "ADD(-S)$<0.1d$ recall and median seconds per frame summed over the sources, including the feed-forward inference. "
           "Re-seeded rows: the pose selected among the five is in addition rotated about the three principal axes of the mesh (vertex "
           "PCA), by $180^\\circ$ (three hypotheses) and then also by $\\pm90^\\circ$ (six more), each rotation refined by stages II--IV "
-          "and entered in the same selection. "
+          "and entered in the same selection. Depth ICP polish: point-to-plane ICP of the masked, back-projected depth "
+          "against the mesh, started from the selected pose and kept only if it fits the observed points better (no ground truth). "
           "Oracle: the best hypothesis chosen with the ground truth, an upper bound for the selection.}",
           "\\label{tab:multisource}", "\\footnotesize", "\\setlength{\\tabcolsep}{4pt}",
           "\\begin{tabular}{@{}lcccccc@{}}", "\\toprule",
@@ -171,6 +218,10 @@ def main() -> int:
         cells = [f"{summary[nm][k]['sr10']:.0f}" for _, nm in eb.DATASETS if nm in summary and k in summary[nm]]
         p_ = summary["pooled"][k]
         tl.append(f"{names[k]} & {' & '.join(cells)} & {p_['sr10']:.0f} & {p_['add']:.0f} & {p_['t_med']:.0f} \\\\")
+        if k == "OursFmReseed" and "Icp" in summary["pooled"]:
+            cells = [f"{summary[nm]['Icp']:.0f}" for _, nm in eb.DATASETS if nm in summary and "Icp" in summary[nm]]
+            pi = summary["pooled"]["Icp"]
+            tl.append(f"\\quad\\quad\\quad + depth ICP polish & {' & '.join(cells)} & {100.0 * pi['ok'] / pi['n']:.0f} & -- & -- \\\\")
     for k, lab in (("OursFm", "oracle of the five (ground truth)"), ("OursFmReseed", "oracle incl.\\ re-seeded (ground truth)")):
         cells = [f"{summary[nm][k]['oracle']:.0f}" for _, nm in eb.DATASETS if nm in summary and k in summary[nm]]
         if k in summary["pooled"]:

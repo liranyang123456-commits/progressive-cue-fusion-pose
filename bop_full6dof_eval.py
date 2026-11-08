@@ -819,7 +819,8 @@ def main() -> int:
     ap.add_argument("--shard", default="", help="i/n: run every n-th frame starting at i (results file gets a _shard<i>of<n> suffix)")
     ap.add_argument("--exclude-from", default="",
                     help="exported root whose frames are excluded from the selection (draws a disjoint second sample)")
-    ap.add_argument("--init-from", default="none", choices=["none", "bins", "vggt", "pi3", "wid3r", "cam3r", "flip180", "flip90"],
+    ap.add_argument("--only-bins", default="", help="init-from bins: comma-separated subset of the exported T0 bins (default: all)")
+    ap.add_argument("--init-from", default="none", choices=["none", "bins", "vggt", "pi3", "wid3r", "cam3r", "flip180", "flip90", "msf"],
                     help="none: full method (stage I-IV); bins: stages II-IV from the exported T0 bins; "
                          "vggt / pi3 / wid3r / cam3r: stages II-IV from the foundation-model initialisation in baseline_<model>_init.jsonl; "
                          "flip180 / flip90: stages II-IV from the lowest-loss pose of the multi-source selection (results.jsonl and "
@@ -890,13 +891,23 @@ def main() -> int:
         print(f"[init] {len(vggt_inits)} lowest-loss poses of the multi-source selection, rotations {flip_angles} about the principal axes")
     done = set()
     done_count: dict[tuple, int] = {}
-    need_per_frame = len(args.rot_bins.split(",")) if args.init_from == "bins" else 3 * len(flip_angles) if flip_angles else 1
+    if args.init_from == "msf":
+        p = out_root / "results_msf_select.jsonl"
+        for line in (p.read_text(encoding="utf-8").splitlines() if p.exists() else []):
+            rec_v = json.loads(line)
+            vggt_inits[rec_v["tag"]] = rec_v
+        print(f"[init] {len(vggt_inits)} poses of the selection over all hypotheses (results_msf_select.jsonl)")
+    only_bins = [b for b in args.only_bins.split(",") if b]
+    n_bins = len(only_bins) if only_bins else len(args.rot_bins.split(","))
+    need_per_frame = n_bins if args.init_from == "bins" else 3 * len(flip_angles) if flip_angles else 1
+    done_bins: set = set()
     if results_path.exists():
         for line in results_path.read_text(encoding="utf-8").splitlines():
             try:
                 rec = json.loads(line)
                 k_ = (rec["scene_id"], rec["im_id"], rec["obj_id"])
                 done_count[k_] = done_count.get(k_, 0) + 1
+                done_bins.add((rec.get("tag"), str(rec.get("bin"))))
                 if done_count[k_] >= need_per_frame:
                     done.add(k_)
             except Exception:
@@ -963,7 +974,8 @@ def main() -> int:
             if args.init_from == "none":
                 init_list = [None]
             elif args.init_from == "bins":
-                init_list = [(i["bin"], np.array(i["R0"]), np.array(i["t0_centred"]), i["rot_err_deg"]) for i in inits]
+                init_list = [(i["bin"], np.array(i["R0"]), np.array(i["t0_centred"]), i["rot_err_deg"]) for i in inits
+                             if (not only_bins or i["bin"] in only_bins) and (tag, str(i["bin"])) not in done_bins]
             else:
                 v = vggt_inits.get(tag)
                 if v is None:
