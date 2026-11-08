@@ -86,6 +86,9 @@ python bop_full6dof_eval.py --dataset lmo --from-export --init-from flip180 --ou
 python bop_full6dof_eval.py --dataset lmo --from-export --init-from flip90 --out bop6dof_results/lmo
 python tools/write_msf_selection.py                       # selection over all hypotheses -> results_msf_select.jsonl
 python tools/icp_polish.py --src results_msf_select.jsonl --out results_msf_icp.jsonl   # training-free point-to-plane depth ICP (CPU)
+python tools/icp_fitness_select.py                 # ICP on every hypothesis, then keep the best depth fit (results_msf_fit_sel.jsonl)
+python tools/analyze_multisource.py                # fitness row of the multi-source table and its macros
+python tools/dense_hyp.py --workers 8              # 252 analytic rotations; results in benchmark_results/dense_hyp_results.json (response letter only, not a manuscript table)
 python bop_full6dof_eval.py --dataset lmo --from-export --init-from msf --size 384 --out-suffix _s384 --out bop6dof_results/lmo   # stages II-IV again at a 384^2 crop
 python baselines/run_wapr_bop.py --root bop6dof_results/lmo --mode refine-from-ours --ours-file results_msf_select.jsonl --out-name baseline_wapr_from_msf.jsonl
 # MegaPose and GoTrack (Linux / WSL 2 Ubuntu, PyTorch cu128): environments, then every protocol on both samples
