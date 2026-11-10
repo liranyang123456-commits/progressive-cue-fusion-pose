@@ -29,7 +29,9 @@ All numbers below come from:
         views and [0.3,...,6.0] in 6
   - benchmark_runs/<mesh>_100gt/ours_v10/gt_poses.csv : real GT camera centers
 
-  python plot_sampling_space.py [--gt-csv PATH] [--out PATH]
+  python plot_sampling_space.py [--gt-csv PATH] [--out PATH] [--font-scale 1.5]
+The default font scale is the one of the figure in the Supplementary Material; text set at
+scale 1.0 on the 11 x 9 in canvas is below 4 pt once the figure is printed at half a column.
 """
 import argparse
 import os
@@ -110,7 +112,10 @@ _OUT_DEFAULT = os.path.join(ROOT, "manuscript", "computational_visual_media", "f
 _ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 _ap.add_argument("--gt-csv", default=_GT_DEFAULT, help="gt_poses.csv of the dragon benchmark run")
 _ap.add_argument("--out", default=_OUT_DEFAULT, help="output PNG")
+_ap.add_argument("--font-scale", type=float, default=1.5,
+                 help="scale of all text relative to the 11 x 9 in canvas (1.5 keeps the labels readable at half a column)")
 _args = _ap.parse_args()
+FS = _args.font_scale
 GT_CSV = _args.gt_csv
 gt_centers = []
 with open(GT_CSV, newline="") as f:
@@ -183,40 +188,46 @@ ax.scatter(GT_CENTERS[:, 0], GT_CENTERS[:, 1], GT_CENTERS[:, 2],
 # mesh center
 ax.scatter([0], [0], [0], c="black", s=40, marker="o", zorder=11)
 
-ax.set_xlabel("x"); ax.set_ylabel("y"); ax.set_zlabel("z")
+ax.set_xlabel("x", fontsize=10 * FS, labelpad=4 * FS)
+ax.set_ylabel("y", fontsize=10 * FS, labelpad=4 * FS)
+ax.set_zlabel("z", fontsize=10 * FS, labelpad=4 * FS)
 ax.set_title("Scale-adaptive multi-radius sampling on the viewing sphere\n"
              "(dragon, r=%.1f; M=%d shells, S=%d dirs/shell, 8 octants)"
-             % (R_MESH, M, S), fontsize=12)
+             % (R_MESH, M, S), fontsize=12 * FS)
 
 # equal aspect
 allpts = np.concatenate([BASE_DIRS * MULTS_V10[-1] * R_MESH,
                          GT_CENTERS], axis=0)
 mx = float(np.abs(allpts).max()) * 1.15
 ax.set_xlim(-mx, mx); ax.set_ylim(-mx, mx); ax.set_zlim(-mx, mx)
+if FS > 1.2:   # fewer ticks, so that the larger tick labels do not collide
+    for set_ticks in (ax.set_xticks, ax.set_yticks, ax.set_zticks):
+        set_ticks(np.arange(-600, 601, 300))
+ax.tick_params(labelsize=10 * FS, pad=2 * FS)
 
 legend = [
     Line2D([0], [0], marker="o", color="w", markerfacecolor=cmap(0.5),
-           markersize=5, label="Direction samples (reused across shells)"),
+           markersize=5 * FS, label="Direction samples (reused across shells)"),
     Line2D([0], [0], marker="^", color="w", markerfacecolor=cmap(0.5),
-           markeredgecolor="black", markersize=7, label="Deterministic anchors"),
-    Line2D([0], [0], color=cmap(0.3), alpha=0.6, lw=1.2,
+           markeredgecolor="black", markersize=7 * FS, label="Deterministic anchors"),
+    Line2D([0], [0], color=cmap(0.3), alpha=0.6, lw=1.2 * FS,
            label="Sampled shells (ours, default range [%.1f, %.1f]r)" % RANGE_V10),
-    Line2D([0], [0], color="#d62728", alpha=0.7, lw=1.2, ls="--",
+    Line2D([0], [0], color="#d62728", alpha=0.7, lw=1.2 * FS, ls="--",
            label="w/o-DA fixed range [0.5, 4.0]r"),
     Line2D([0], [0], marker="*", color="w", markerfacecolor="red",
-           markeredgecolor="darkred", markersize=11,
+           markeredgecolor="darkred", markersize=11 * FS,
            label="Ground-truth cameras (100, all inside [0.5,4.0]r)"),
     Line2D([0], [0], marker="o", color="w", markerfacecolor="black",
-           markersize=7, label="Mesh center"),
+           markersize=7 * FS, label="Mesh center"),
 ]
 ax.legend(handles=legend, loc="upper left", bbox_to_anchor=(0.0, 0.97),
-          fontsize=8.5, framealpha=0.9)
+          fontsize=8.5 * FS, framealpha=0.9)
 
 ax.view_init(elev=22, azim=-58)
 plt.tight_layout()
 OUT = _args.out
 os.makedirs(os.path.dirname(os.path.abspath(OUT)), exist_ok=True)
-plt.savefig(OUT, dpi=180, bbox_inches="tight")
+plt.savefig(OUT, dpi=180, bbox_inches="tight", pad_inches=0.1 * max(1.0, FS))
 print("Saved:", OUT)
 print("M=%d shells, S=%d dirs/shell, GT cameras=%d" % (M, S, len(GT_CENTERS)))
 # sanity: confirm all GT distances lie inside v9 range [0.5,4.0]r

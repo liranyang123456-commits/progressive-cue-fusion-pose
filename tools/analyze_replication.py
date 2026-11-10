@@ -31,7 +31,9 @@ KEY = {"lmo": "LMO", "lm": "LM", "tless": "TLESS"}
 INIT_FREE = (("ours_full", "Proposed", "Ours"), ("ours_ms", "\\quad + FM hypotheses", "OursMs"),
              ("ours_msf", "\\quad + FM and re-seeded hypotheses", "OursMsf"),
              ("msf_icp", "\\quad\\quad + depth ICP polish", "MsfIcp"),
+             ("msf_fit", "\\quad\\quad + per-candidate ICP, fitness selection", "MsfFit"),
              ("wapr_full", "WAPR, 12 hypotheses", "WaprFull"), ("fp_full", "FoundationPose", "FpFull"), ("mp_full", "MegaPose", "MpFull"))
+FIT_SEL = "results_msf_fit_sel.jsonl"  # tools/icp_fitness_select.py: the ICP on every hypothesis, the best depth fit kept
 FROM_OURS = {"ours_wapr": ("WAPR refine", "OursWapr", "baseline_wapr_from_ours.jsonl"),
              "ours_fp": ("FoundationPose refine", "OursFp", "baseline_foundationpose_from_ours.jsonl"),
              "ours_mp": ("MegaPose refine", "OursMp", "baseline_megapose_from_ours.jsonl"),
@@ -66,6 +68,9 @@ def load(root: Path, ds: str) -> dict:
         recs = [r for r in eb.read_jsonl(root / ds / fn) if "e_R_deg" in r]
         eb.add_sym_error(ds, recs)
         g[k] = list({r["tag"]: r for r in recs}.values())
+    recs = [r for r in eb.read_jsonl(root / ds / FIT_SEL) if "e_R_deg" in r]
+    eb.add_sym_error(ds, recs)
+    g["msf_fit"] = list({r["tag"]: r for r in recs}.values())
     return g
 
 
