@@ -17,6 +17,7 @@ outputs is included; the GPU runs themselves can be reproduced with the commands
 | `tools/wsl/` | environments (PyTorch cu128) and run script for MegaPose (HappyPose) and GoTrack, whose released environments pin CUDA 11 |
 | `tools/make_scflow2_data.py`, `tools/convert_scflow2_results.py`, `tools/scflow2_port/` | SCFlow2 (CVPR 2025) on the same frames and initial poses: data/config export, the CUDA 11 worker scripts, the Windows path patches, the lietorch / scikit-sparse drop-in shims and the result converter (see `tools/scflow2_port/README.md`) |
 | `tools/export_revision_results.py`, `tools/export_bop_results.py`, `tools/make_qualitative_figures.py` | tables, macros and figures of the manuscript |
+| `plot_sampling_space.py`, `tools/make_response_figures.py` | shell-layout figure of the Supplementary Material (Fig. S1) and the figures of the response letter |
 | `results/` | per-view metrics (`pose_metrics_summary.csv`), stage timings, BOP `*.jsonl`, leak-test reports |
 
 ## Environment
@@ -38,6 +39,7 @@ python tools/derive_geom_only.py --run-root benchmark_runs/bunny_100gt   # Geom-
 python run_benchmark_compare.py --dataset bunny --num-gt 100 --methods ours_v10_fast --max-views 30   # 1/8 budget (M=20, S=256, K=8, B=24, L=16); also dragon
 python tools/export_revision_results.py                   # tables/*.tex, results_macros.tex, binned-SR figure
 python tools/make_qualitative_figures.py
+python plot_sampling_space.py                             # Supplementary Fig. S1: the shell layout on the dragon (default range [0.4, 6.0] r)
 python tools/test_no_gt_leak.py --dataset bunny --methods ours_v10,grid_adam,rand_restart_adam --num-gt 3 --legacy
 # recent methods on exactly the same observations (640x480 RGB, metric depth, silhouette; mesh scaled to r = 100 mm)
 python tools/export_synth_frames.py                              # synth_frames/<mesh>/gt_XX/{observation.npz, protocol.json}
