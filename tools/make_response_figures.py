@@ -215,25 +215,38 @@ def fig_novelty() -> int:
     da = read_da_table()
     val = lambda k: float(mac[k])  # noqa: E731
 
-    fig = plt.figure(figsize=(6.6, 2.3))
-    gs = fig.add_gridspec(1, 4, width_ratios=[5.9, 2.0, 1.15, 3.4], left=0.06, right=0.995, bottom=0.2, top=0.74, wspace=0.44)
-    ax_a, ax_b1, ax_b2, ax_c = (fig.add_subplot(gs[0, i]) for i in range(4))
+    fig = plt.figure(figsize=(7.2, 2.3))
+    gs = fig.add_gridspec(1, 5, width_ratios=[4.8, 1.9, 1.9, 1.1, 3.9], left=0.055, right=0.995, bottom=0.2, top=0.74, wspace=0.5)
+    ax_a, ax_a2, ax_b1, ax_b2, ax_c = (fig.add_subplot(gs[0, i]) for i in range(5))
 
-    # (a) basin commitment: same proposals, three ways of using them
+    # (a) basin commitment: the lowest-loss proposal of the proposed run alone against the complete method (same proposals,
+    #     loss and seeds); right: reduced-budget control on the views whose lowest-loss proposal is outside 10 deg
     x = list(range(len(MESHES)))
-    w = 0.27
-    series = [("TopKSRten", "best proposal, no refinement (Rand-TopK)", C_CTRL2), ("GreedySRten", "width-one walk (Greedy-BT)", C_CTRL),
-              ("SRten", "beam (proposed)", C_FULL)]
+    w = 0.38
+    series = [("StageOneSRten", "lowest-loss proposal (stage I only)", C_CTRL), ("SRten", "stages I-IV (proposed)", C_FULL)]
     for i, (suffix, lab, col) in enumerate(series):
         ys = [val(f"Res{m}{suffix}") for m in MESHES]
-        bars = ax_a.bar([xi + (i - 1) * w for xi in x], ys, w * 0.94, color=col, label=lab, zorder=3)
+        bars = ax_a.bar([xi + (i - 0.5) * w for xi in x], ys, w * 0.94, color=col, label=lab, zorder=3)
         label_bars(ax_a, bars)
     ax_a.set_xticks(x)
-    ax_a.set_xticklabels(["Bunny", "Dragon", "Armadillo", "Happy B.", "Lucy"], fontsize=6.4)
+    ax_a.set_xticklabels(["Bunny", "Dragon", "Armadillo", "Happy B.", "Lucy"], fontsize=6.0)
     ax_a.set_ylabel("SR@10\u00b0 (%)")
     ax_a.set_ylim(0, 112)
     ax_a.set_yticks([0, 25, 50, 75, 100])
     tidy(ax_a)
+    n_ret = val("RetN")
+    wa = 0.36
+    one = [100.0 * val("RetOneWalk") / n_ret, 100.0 * val("RetOneBeam") / n_ret]
+    allk = [100.0 * val("RetKWalk") / n_ret, 100.0 * val("RetKBeam") / n_ret]
+    label_bars(ax_a2, ax_a2.bar([v - wa / 2 for v in (0, 1)], one, wa * 0.94, color=C_CTRL, zorder=3))
+    label_bars(ax_a2, ax_a2.bar([v + wa / 2 for v in (0, 1)], allk, wa * 0.94, color=C_FULL, zorder=3))
+    ax_a2.set_xticks([0, 1])
+    ax_a2.set_xticklabels(["walk", "beam"], fontsize=6.6)
+    ax_a2.set_xlabel(f"1/8 budget (N={int(n_ret)})", fontsize=6.4, labelpad=1.5)
+    ax_a2.set_ylabel("recovered (%)", labelpad=1.0)
+    ax_a2.set_ylim(0, 112)
+    ax_a2.set_yticks([0, 50, 100])
+    tidy(ax_a2)
 
     # (b) radial flatness: distance alignment removed (matched synthetic views) and isolated on sensor depth
     xb = [0, 1]
@@ -277,12 +290,12 @@ def fig_novelty() -> int:
         boxes = [a.get_position() for a in axes]
         return 0.5 * (min(b.x0 for b in boxes) + max(b.x1 for b in boxes))
 
-    for axes, title in (((ax_a,), "(a) Basin commitment"), ((ax_b1, ax_b2), "(b) Radial flatness"), ((ax_c,), "(c) Premature appearance")):
+    for axes, title in (((ax_a, ax_a2), "(a) Basin commitment"), ((ax_b1, ax_b2), "(b) Radial flatness"), ((ax_c,), "(c) Premature appearance")):
         fig.text(centre(*axes), 0.965, title, ha="center", va="top", fontsize=8.5, fontweight="bold")
     patch = lambda col: plt.Rectangle((0, 0), 1, 1, color=col)  # noqa: E731
     kw = dict(fontsize=6.1, frameon=False, handlelength=1.1, handletextpad=0.4, borderaxespad=0.0, labelspacing=0.25)
-    fig.legend([patch(C_CTRL2), patch(C_CTRL), patch(C_FULL)], ["best proposal, no refinement", "width-one walk", "beam (proposed)"],
-               loc="upper center", bbox_to_anchor=(centre(ax_a), 0.895), ncol=3, columnspacing=0.9, **kw)
+    fig.legend([patch(C_CTRL), patch(C_FULL)], ["best proposal / best seed only", "stages I-IV / all K seeds"],
+               loc="upper center", bbox_to_anchor=(centre(ax_a, ax_a2), 0.895), ncol=1, **kw)
     fig.legend([patch(C_CTRL), patch(C_FULL)], ["without distance alignment", "with it (proposed)"],
                loc="upper center", bbox_to_anchor=(centre(ax_b1, ax_b2), 0.895), ncol=1, **kw)
     fig.legend([patch(C_FULL), patch(C_CTRL)], ["mask + depth, no colour", "colour from the first iteration"],
@@ -292,7 +305,7 @@ def fig_novelty() -> int:
     fig.savefig(OUT / "fig_r_novelty.pdf")
     fig.savefig(OUT / "fig_r_novelty.png", dpi=200)
     print("[written]", OUT / "fig_r_novelty.pdf")
-    print("[data] basin   :", {m: [mac[f"Res{m}{s}"] for s in ("TopKSRten", "GreedySRten", "SRten")] for m in MESHES})
+    print("[data] basin   :", {m: [mac[f"Res{m}{s}"] for s in ("StageOneSRten", "SRten")] for m in MESHES}, "| reduced budget:", one, allk)
     print("[data] radial  :", da, shell)
     print("[data] colour  :", list(zip(off, on)))
     return 0

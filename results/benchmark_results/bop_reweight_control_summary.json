@@ -1,0 +1,60 @@
+{
+ "datasets": {
+  "lmo": {
+   "n": 14,
+   "same": 6,
+   "rew": 6,
+   "draw2": 4,
+   "arch": 3
+  },
+  "lm": {
+   "n": 11,
+   "same": 4,
+   "rew": 4,
+   "draw2": 3,
+   "arch": 3
+  },
+  "tless": {
+   "n": 11,
+   "same": 5,
+   "rew": 5,
+   "draw2": 5,
+   "arch": 5
+  }
+ },
+ "n": 36,
+ "ok": {
+  "same": 15,
+  "rew": 15,
+  "draw2": 12,
+  "arch": 11
+ },
+ "same_vs_reweighted": {
+  "only_first": 0,
+  "only_second": 0,
+  "p": 1.0,
+  "same_outcome": 36,
+  "identical": 35,
+  "within_1deg": 35
+ },
+ "seeded_repeat_lmo": {
+  "n": 4,
+  "identical": 3
+ },
+ "two_draws_same_weights": {
+  "only_first": 3,
+  "only_second": 0,
+  "p": 0.25,
+  "same_outcome": 33,
+  "identical": 6,
+  "within_1deg": 17
+ },
+ "reweighted_vs_archived": {
+  "only_first": 4,
+  "only_second": 0,
+  "p": 0.125,
+  "same_outcome": 32,
+  "identical": 5,
+  "within_1deg": 14
+ }
+}

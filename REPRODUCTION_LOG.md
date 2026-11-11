@@ -125,3 +125,40 @@ python tools/make_qualitative_figures.py
   with the default seed rule (`ours_v10_fast_ref`) and without the two elevation-related priors and with seed bins /
   anchors symmetric about the equator (`ours_v10_fast_sym`): 19 / 19 solved (median 0.35 / 0.43 deg; full budget 19,
   WAPR 0), no view changes outcome; the failure in all runs is the flipped Happy Buddha view gt_05.
+* Controls added while aligning the text with the released code (11-11).
+  (a) Auxiliary terms. The archived full-budget synthetic runs (`ours_v10`) contained an appearance term in the order of
+  the stage-I seeds (`VAL_GLOBAL_RGB_RERANK=1`) and, on beam levels whose candidates have a mean elevation >= 45 deg,
+  depth / normal weights raised by 2.5 / 1.5 plus an appearance term (`VAL_LOCAL_BEAM_HIGH_ELEV_AUX=1`). Both are now
+  off by default; `ours_v10_aux` / `ours_v10_fast_aux` switch them on. At the 1/8 budget without them
+  (`ours_v10_fast_clean`, all 350 views): 348 within 10 deg (full budget with the terms: 349), median e_R
+  0.39 deg, 0 wrong shells; the two misses (Happy Buddha gt_05, gt_37) are also missed with the terms
+  at that budget. With the terms on 51 views (first 10 per mesh and the views the clean run misses): 49 against 49
+  solved, the same views; 44 identical estimates, largest difference 0.14 deg.
+  (b) Stage I only (`tools/derive_stage1_only.py`): the lowest-loss proposal of the full-budget run is within 10 deg in
+  319 of 350 views; at the 1/8 budget in 252.
+  (c) Retained seeds and beam width, on the 98 views whose lowest-loss proposal is outside 10 deg at the 1/8 budget:
+  all K=8 seeds with the width-24 beams 96, with a width-one walk (`ours_v10_fast_w1`) 96; only the lowest-loss seed
+  (`VAL_LOCAL_BEST_SEED_ONLY=1`) with the beam (`ours_v10_fast_k1`) 90, with the walk (`ours_v10_fast_k1w1`) 89.
+  Summary: `tools/analyze_aux_control.py` -> `benchmark_results/aux_control_summary.json`.
+  (d) Baselines. The DR baselines, Rand-TopK and Greedy-BT ran under the v9 profile (s_img = 1, fixed 36 shells
+  0.5r-4r) and no multi-start refinement was executed: RandRestart+Adam is one Adam run of 400 iterations from the
+  Rand-TopK pose. It starts within 10 deg in 137 of 350 views and ends within 10 deg in 89 (56 lost, 8 gained);
+  Grid+Adam 70 -> 41 (`tools/analyze_adam_start_end.py`).
+  (e) The optional Adam polish (`VAL_LOCAL_BEAM_FINAL_DR_ENABLE`) was off in every reported run; the paper no longer
+  describes it.
+  (f) BOP seeding, re-weighting and full-budget 2x2 controls (11-12). All full-budget BOP runs on both disjoint samples
+  (`bop6dof_results`, `bop6dof_results_second`; 104 + 104 = 208 frames), the 104-frame 1/8-budget run
+  (`bop6dof_results_fast`) and every downstream BOP step (6 `refine-from-ours` refiners, `flip180`/`flip90`,
+  `results_msf_select.jsonl`, `results_init_msf_s384.jsonl`, `refine-from-msf`, `icp_polish.py`, `icp_fitness_select.py`,
+  `dense_hyp.py`) were recomputed with per-frame seeded stage-I proposals (`seed_frame(tag, seed)`) and uniform beam
+  weights (released default): Sample 1 SR@10 sym. 35.6% (37/104; +FM 57.7%, +re-seeded 69.2%, +ICP 78.8%, +fitness
+  86.5%; 6 refiners from ours 44-66%), Sample 2 29.8% (31/104; both samples 32.7% -> 84.1% fitness).
+  On every third frame (36 frames) at the 1/8 budget, seeded: 15 within 10 deg sym. with uniform weights, 15 with
+  `--high-elev-weights`, 35 of 36 estimates identical (`tools/analyze_bop_reweight_control.py`).
+  Full-budget 2x2 controls (`tools/analyze_full_controls.py` -> `benchmark_results/full_controls_summary.json`):
+  - Synthetic (the 31 views where Stage I > 10 deg): all K=16 seeds + B=48 beam (`ours_v10_clean`) 30/31, K=16 + B=1
+    walk (`ours_v10_w1`) 29/31 (p=1.00), K=1 + B=48 (`ours_v10_k1`) 29/31, K=1 + B=1 (`ours_v10_k1w1`) 29/31.
+  - BOP (all 208 frames of both samples, identical cached Stage-I proposals): K=8 + B=48 68/208 (32.7%), K=8 + B=1
+    walk (`results_w1.jsonl`) 67/208 (32.2%, +1/-0, p=1.00; 183/208 identical to 1e-6 deg; local time 46s -> 5s),
+    K=1 + B=48 (`results_k1.jsonl`) 57/208 (27.4%, +15/-4 vs K=8, exact McNemar p=0.019), K=1 + B=1
+    (`results_k1_w1.jsonl`) 57/208 (27.4%, +15/-5 vs K=8 walk, p=0.041).

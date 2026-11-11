@@ -14,8 +14,9 @@ parameters verified from the benchmark logs:
         ("scale amplification")
   - deterministic elevation/azimuth grid anchors on every shell
   - real ground-truth camera positions from gt_poses.csv overlaid, to show that
-    the correct shell lies INSIDE the sampled range (the w/o-DA fixed range
-    [0.5, 4.0] r is also drawn for contrast).
+    the correct shell lies INSIDE the sampled range (the fixed range [0.5, 4.0] r of
+    the fixed multi-radius ablation, 36 linearly spaced shells, is also drawn for
+    contrast; the variant without distance alignment keeps the proposed shells).
 
 All numbers below come from:
   - Exp_Camera_Optim_..._Standford122.py : _resolve_radii_mults
@@ -30,8 +31,11 @@ All numbers below come from:
   - benchmark_runs/<mesh>_100gt/ours_v10/gt_poses.csv : real GT camera centers
 
   python plot_sampling_space.py [--gt-csv PATH] [--out PATH] [--font-scale 1.5]
+  python plot_sampling_space.py --panel --out figures/pipeline_assets/sampling_space_clean.png
 The default font scale is the one of the figure in the Supplementary Material; text set at
 scale 1.0 on the 11 x 9 in canvas is below 4 pt once the figure is printed at half a column.
+--panel draws the compact centre panel of the pipeline figure of the main text (no title, close
+view, short legend) from the same shells, directions, anchors and ground-truth cameras.
 """
 import argparse
 import os
@@ -62,7 +66,7 @@ def resolve_radii_mults(min_m, max_m, n_steps=40):
 R_MESH = 119.393555
 RANGE_V10 = (0.4, 6.0)
 MULTS_V10 = resolve_radii_mults(*RANGE_V10, n_steps=40)      # ours (default range)
-MULTS_V9  = resolve_radii_mults(0.5, 4.0, n_steps=40)        # w/o-DA (fixed)
+MULTS_FIXED = resolve_radii_mults(0.5, 4.0, n_steps=40)      # range of the fixed multi-radius ablation
 M = len(MULTS_V10)
 
 # ---------------------------------------------------------------------------
@@ -114,8 +118,14 @@ _ap.add_argument("--gt-csv", default=_GT_DEFAULT, help="gt_poses.csv of the drag
 _ap.add_argument("--out", default=_OUT_DEFAULT, help="output PNG")
 _ap.add_argument("--font-scale", type=float, default=1.5,
                  help="scale of all text relative to the 11 x 9 in canvas (1.5 keeps the labels readable at half a column)")
+_ap.add_argument("--panel", action="store_true",
+                 help="compact centre panel of the pipeline figure (main text) instead of the supplementary figure")
 _args = _ap.parse_args()
 FS = _args.font_scale
+PANEL = _args.panel
+if PANEL:
+    plt.rcParams.update({"font.family": "serif", "font.serif": ["Times New Roman", "DejaVu Serif"], "font.weight": "bold",
+                         "axes.labelweight": "bold", "mathtext.fontset": "stix"})
 GT_CSV = _args.gt_csv
 gt_centers = []
 with open(GT_CSV, newline="") as f:
@@ -137,8 +147,9 @@ GT_CENTERS = np.array(gt_centers)   # (100, 3)
 # ---------------------------------------------------------------------------
 # 4. Plot
 # ---------------------------------------------------------------------------
-fig = plt.figure(figsize=(11, 9), dpi=180)
-ax = fig.add_subplot(111, projection="3d")
+fig = plt.figure(figsize=(6.25, 4.81) if PANEL else (11, 9), dpi=200 if PANEL else 180)
+ax = fig.add_axes([-0.175, -0.145, 1.26, 1.40], projection="3d") if PANEL else fig.add_subplot(111, projection="3d")
+PT = 4.0 if PANEL else 1.0      # marker scale of the panel (drawn about four times closer)
 
 # draw the proposed (v10) shells: a subset for clarity, colored by shell index
 show_idx = np.linspace(0, M - 1, 8).astype(int)   # 8 representative shells
@@ -161,15 +172,15 @@ for k, i in enumerate(show_idx):
     radius = m * R_MESH
     pts = BASE_DIRS * radius
     col = cmap(k / (len(show_idx) - 1))
-    ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], c=[col], s=2.2,
+    ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], c=[col], s=2.2 * PT,
                alpha=0.55, depthshade=False, edgecolors="none")
     # anchors
     apts = ANCHOR_DIRS * radius
-    ax.scatter(apts[:, 0], apts[:, 1], apts[:, 2], c=[col], s=14,
+    ax.scatter(apts[:, 0], apts[:, 1], apts[:, 2], c=[col], s=14 * PT,
                marker="^", alpha=0.9, depthshade=False, edgecolors="black",
-               linewidths=0.3)
+               linewidths=0.3 * (2.0 if PANEL else 1.0))
 
-# v9 (w/o-DA) fixed range boundary: inner [0.5]r and outer [4.0]r spheres
+# fixed multi-radius ablation: inner [0.5]r and outer [4.0]r spheres of its range
 for m, ls in [(0.5, "--"), (4.0, "--")]:
     radius = m * R_MESH
     u = np.linspace(0, 2 * np.pi, 60)
@@ -177,62 +188,79 @@ for m, ls in [(0.5, "--"), (4.0, "--")]:
     x = radius * np.outer(np.cos(u), np.sin(v))
     y = radius * np.outer(np.sin(u), np.sin(v))
     z = radius * np.outer(np.ones_like(u), np.cos(v))
-    ax.plot_wireframe(x, y, z, color="#d62728", alpha=0.22, linewidth=0.8,
+    ax.plot_wireframe(x, y, z, color="#d62728", alpha=0.45 if PANEL else 0.22, linewidth=1.6 if PANEL else 0.8,
                       rstride=6, cstride=8, linestyle=ls)
 
 # ground-truth camera positions (real data)
 ax.scatter(GT_CENTERS[:, 0], GT_CENTERS[:, 1], GT_CENTERS[:, 2],
-           c="red", s=26, marker="*", alpha=1.0, depthshade=False,
+           c="red", s=26 * PT, marker="*", alpha=1.0, depthshade=False,
            edgecolors="darkred", linewidths=0.4, zorder=10)
 
 # mesh center
 ax.scatter([0], [0], [0], c="black", s=40, marker="o", zorder=11)
 
-ax.set_xlabel("x", fontsize=10 * FS, labelpad=4 * FS)
-ax.set_ylabel("y", fontsize=10 * FS, labelpad=4 * FS)
-ax.set_zlabel("z", fontsize=10 * FS, labelpad=4 * FS)
-ax.set_title("Scale-adaptive multi-radius sampling on the viewing sphere\n"
-             "(dragon, r=%.1f; M=%d shells, S=%d dirs/shell, 8 octants)"
-             % (R_MESH, M, S), fontsize=12 * FS)
+if PANEL:
+    FS = 1.7
+ax.set_xlabel("x", fontsize=10 * FS, labelpad=(-6 if PANEL else 4 * FS))
+ax.set_ylabel("y", fontsize=10 * FS, labelpad=(-6 if PANEL else 4 * FS))
+if not PANEL:
+    ax.set_zlabel("z", fontsize=10 * FS, labelpad=4 * FS)
+    ax.set_title("Scale-adaptive multi-radius sampling on the viewing sphere\n"
+                 "(dragon, r=%.1f; M=%d shells, S=%d dirs/shell, 8 octants)"
+                 % (R_MESH, M, S), fontsize=12 * FS)
 
 # equal aspect
 allpts = np.concatenate([BASE_DIRS * MULTS_V10[-1] * R_MESH,
                          GT_CENTERS], axis=0)
 mx = float(np.abs(allpts).max()) * 1.15
 ax.set_xlim(-mx, mx); ax.set_ylim(-mx, mx); ax.set_zlim(-mx, mx)
-if FS > 1.2:   # fewer ticks, so that the larger tick labels do not collide
+if PANEL:      # close view: the box of the fixed range, with the outer adaptive shells running out of the frame
+    mz = 4.0 * R_MESH * 1.04
+    ax.set_xlim(-mz, mz); ax.set_ylim(-mz, mz); ax.set_zlim(-mz, mz)
+    for set_ticks in (ax.set_xticks, ax.set_yticks, ax.set_zticks):
+        set_ticks([-300, 0, 300])
+elif FS > 1.2:   # fewer ticks, so that the larger tick labels do not collide
     for set_ticks in (ax.set_xticks, ax.set_yticks, ax.set_zticks):
         set_ticks(np.arange(-600, 601, 300))
-ax.tick_params(labelsize=10 * FS, pad=2 * FS)
+ax.tick_params(labelsize=10 * FS, pad=(-3 if PANEL else 2 * FS))
 
 legend = [
     Line2D([0], [0], marker="o", color="w", markerfacecolor=cmap(0.5),
-           markersize=5 * FS, label="Direction samples (reused across shells)"),
-    Line2D([0], [0], marker="^", color="w", markerfacecolor=cmap(0.5),
-           markeredgecolor="black", markersize=7 * FS, label="Deterministic anchors"),
-    Line2D([0], [0], color=cmap(0.3), alpha=0.6, lw=1.2 * FS,
-           label="Sampled shells (ours, default range [%.1f, %.1f]r)" % RANGE_V10),
-    Line2D([0], [0], color="#d62728", alpha=0.7, lw=1.2 * FS, ls="--",
-           label="w/o-DA fixed range [0.5, 4.0]r"),
+           markersize=5 * FS, label="Direction samples (S=%d)" % S if PANEL else "Direction samples (reused across shells)"),
+    Line2D([0], [0], marker="^", color="w", markerfacecolor=cmap(0.5 if not PANEL else 0.75),
+           markeredgecolor="black", markersize=7 * FS, label="Deterministic grid anchors" if PANEL else "Deterministic anchors"),
+    Line2D([0], [0], color=cmap(0.3), alpha=1.0 if PANEL else 0.6, lw=1.2 * FS * (1.5 if PANEL else 1.0),
+           label=("Adaptive shells [%.1f, %.1f]r" if PANEL else "Sampled shells (ours, default range [%.1f, %.1f]r)") % RANGE_V10),
+    Line2D([0], [0], color="#d62728", alpha=1.0 if PANEL else 0.7, lw=1.2 * FS * (1.5 if PANEL else 1.0), ls="--",
+           label="Fixed shells [0.5, 4.0]r" if PANEL else "Fixed multi-radius ablation [0.5, 4.0]r"),
     Line2D([0], [0], marker="*", color="w", markerfacecolor="red",
-           markeredgecolor="darkred", markersize=11 * FS,
-           label="Ground-truth cameras (100, all inside [0.5,4.0]r)"),
-    Line2D([0], [0], marker="o", color="w", markerfacecolor="black",
-           markersize=7 * FS, label="Mesh center"),
+           markeredgecolor="darkred", markersize=(9 if PANEL else 11) * FS,
+           label="GT cameras (N=%d)" % len(GT_CENTERS) if PANEL else "Ground-truth cameras (100, all inside [0.5,4.0]r)"),
 ]
-ax.legend(handles=legend, loc="upper left", bbox_to_anchor=(0.0, 0.97),
-          fontsize=8.5 * FS, framealpha=0.9)
+if not PANEL:
+    legend.append(Line2D([0], [0], marker="o", color="w", markerfacecolor="black",
+                         markersize=7 * FS, label="Mesh center"))
+if PANEL:      # figure-level legend: drawn above the markers, anchored at the top-left corner of the panel
+    fig.legend(handles=legend, loc="upper left", bbox_to_anchor=(0.004, 0.996), fontsize=8.9 * FS, framealpha=0.94,
+               edgecolor="black", fancybox=False, borderpad=0.25, labelspacing=0.18, handlelength=1.1, handletextpad=0.35,
+               borderaxespad=0.0)
+else:
+    ax.legend(handles=legend, loc="upper left", bbox_to_anchor=(0.0, 0.97),
+              fontsize=8.5 * FS, framealpha=0.9)
 
 ax.view_init(elev=22, azim=-58)
-plt.tight_layout()
 OUT = _args.out
 os.makedirs(os.path.dirname(os.path.abspath(OUT)), exist_ok=True)
-plt.savefig(OUT, dpi=180, bbox_inches="tight", pad_inches=0.1 * max(1.0, FS))
+if PANEL:
+    plt.savefig(OUT, dpi=200)
+else:
+    plt.tight_layout()
+    plt.savefig(OUT, dpi=180, bbox_inches="tight", pad_inches=0.1 * max(1.0, FS))
 print("Saved:", OUT)
 print("M=%d shells, S=%d dirs/shell, GT cameras=%d" % (M, S, len(GT_CENTERS)))
-# sanity: confirm all GT distances lie inside v9 range [0.5,4.0]r
+# sanity: confirm all GT distances lie inside the fixed range [0.5,4.0]r
 gt_d = np.linalg.norm(GT_CENTERS, axis=1) / R_MESH
-print("GT dist/r  min=%.3f max=%.3f  (v9 range [0.5,4.0], v10 default range [%.1f,%.1f])"
+print("GT dist/r  min=%.3f max=%.3f  (fixed range [0.5,4.0], default adaptive range [%.1f,%.1f])"
       % (gt_d.min(), gt_d.max(), RANGE_V10[0], RANGE_V10[1]))
-print("GT inside v9 [0.5,4.0]r: %d/%d" % (np.sum((gt_d >= 0.5) & (gt_d <= 4.0)),
+print("GT inside the fixed range [0.5,4.0]r: %d/%d" % (np.sum((gt_d >= 0.5) & (gt_d <= 4.0)),
                                            len(gt_d)))

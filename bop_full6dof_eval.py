@@ -46,8 +46,10 @@ import io
 import json
 import math
 import os
+import random
 import sys
 import time
+import zlib
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
@@ -448,11 +450,29 @@ PIPE_ENV = {
     "VAL_GT_ELEV_MAX": "89.0",
     "VAL_LOCAL_BEAM_ELEV_CONSTRAIN": "0",
     "VAL_LOCAL_BEAM_AZIM_CONSTRAIN": "0",
+    # every beam candidate is scored with the same geometry weights; --high-elev-weights restores the re-weighting of
+    # the archived runs (depth x2.5, normals x1.5 on beam levels whose candidates have a mean elevation >= 45 deg)
+    "VAL_LOCAL_BEAM_HIGH_ELEV_AUX": "0",
 }
 
 
+# width of the coarse pass of stage III (--beam-width sets it together with the width of the fine pass)
+COARSE_BEAM_WIDTH = "24"
+
+
+def seed_frame(tag: str, base: int) -> None:
+    """Seed the generators from which stage I draws its proposals, per frame, so that the estimate of a frame depends
+    neither on the run nor on the frames processed before it in the same process."""
+    s = (int(base) * 1000003 + zlib.crc32(tag.encode("utf-8"))) % (2 ** 31 - 1)
+    random.seed(s)
+    np.random.seed(s)
+    torch.manual_seed(s)
+    torch.cuda.manual_seed_all(s)
+
+
 def run_method(mesh, mesh_r: float, obs: VirtualObs, device, out_dir: Path, *, roll_bins: int = 12,
-               beam_seeds: int = 8, verbose: bool = True, fr=None, lateral: bool = True) -> dict:
+               beam_seeds: int = 8, verbose: bool = True, fr=None, lateral: bool = True,
+               reuse_stage1: bool = False, frame_seeded: bool = True) -> dict:
     """Returns dict with est pose in the virtual camera (dist, elev, azim, psi) and timings."""
     for k, v in PIPE_ENV.items():
         os.environ[k] = v
@@ -464,22 +484,47 @@ def run_method(mesh, mesh_r: float, obs: VirtualObs, device, out_dir: Path, *, r
     exp._estimate_depth_centre_offset(mesh, rast, at, float(mesh_r), device)
     t0 = exp._stage_now()
 
-    # Stage I over the roll bank
+    # Stage I over the roll bank (cached per frame so beam-width / seed-count controls share identical proposals)
+    cache_tag = "_fast" if os.environ.get("VAL_RAND_RADIUS_STEPS") == "12" else ""
+    s1_cache = out_dir / f"stage1_cand{cache_tag}.json"
+    can_cache = (frame_seeded
+                 and not OCCLUSION_AWARE
+                 and os.environ.get("VAL_LOSS_SCALE", "1") == "1"
+                 and os.environ.get("VAL_LOCAL_BEAM_HIGH_ELEV_AUX", "0") == "0")
+    loaded_s1 = False
     cand = []  # (score, dist, elev, azim, psi)
-    for k in range(roll_bins):
-        psi = 360.0 * k / roll_bins
-        m, d, n, r = rotate_obs(obs, psi)
-        mt, dt, nt, rt = obs_to_pipeline(m, d, n, r, device)
-        set_sil_scene(obs, psi, device)
-        seeds = exp.global_random_sampling_1024(
-            mesh=mesh, verts=mesh.verts, mesh_center_xyz=at, silhouette_renderer=sil_r, rasterizer=rast,
-            phong_renderer=None, image_ref_silhouette=mt, ref_depth=dt, ref_normals=nt, image_ref_rgb=None,
-            init_dist=float(3.0 * mesh_r), init_elev=20.0, init_azim=0.0, device=device,
-            save_dir=str(out_dir / f"roll_{k:02d}"), tag=f"roll{k:02d}", R_gt=None, T_gt=None,
-        )
-        for (sd, se, sa, sl) in seeds:
-            if math.isfinite(sl):
-                cand.append((float(sl), float(sd), float(se), float(sa), psi))
+    t_global_s = 0.0
+    if reuse_stage1 and can_cache and s1_cache.exists():
+        try:
+            cached = json.loads(s1_cache.read_text(encoding="utf-8"))
+            if int(cached.get("roll_bins", -1)) == int(roll_bins) and cached.get("cand"):
+                cand = [tuple(float(v) for v in x) for x in cached["cand"]]
+                t_global_s = float(cached.get("t_global_s", 0.0))
+                loaded_s1 = True
+        except Exception:
+            cand = []
+    if not loaded_s1:
+        for k in range(roll_bins):
+            psi = 360.0 * k / roll_bins
+            m, d, n, r = rotate_obs(obs, psi)
+            mt, dt, nt, rt = obs_to_pipeline(m, d, n, r, device)
+            set_sil_scene(obs, psi, device)
+            seeds = exp.global_random_sampling_1024(
+                mesh=mesh, verts=mesh.verts, mesh_center_xyz=at, silhouette_renderer=sil_r, rasterizer=rast,
+                phong_renderer=None, image_ref_silhouette=mt, ref_depth=dt, ref_normals=nt, image_ref_rgb=None,
+                init_dist=float(3.0 * mesh_r), init_elev=20.0, init_azim=0.0, device=device,
+                save_dir=str(out_dir / f"roll_{k:02d}"), tag=f"roll{k:02d}", R_gt=None, T_gt=None,
+            )
+            for (sd, se, sa, sl) in seeds:
+                if math.isfinite(sl):
+                    cand.append((float(sl), float(sd), float(se), float(sa), psi))
+        t_global_s = exp._stage_now() - t0
+        if can_cache and cand:
+            try:
+                s1_cache.write_text(json.dumps({"roll_bins": int(roll_bins), "t_global_s": t_global_s, "cand": cand}),
+                                    encoding="utf-8")
+            except Exception:
+                pass
     t1 = exp._stage_now()
     cand.sort(key=lambda x: x[0])
     # keep the best seeds overall but at least one per distinct roll among the top bins
@@ -493,7 +538,8 @@ def run_method(mesh, mesh_r: float, obs: VirtualObs, device, out_dir: Path, *, r
         chosen.append(c)
         seen_roll.add(c[4])
     if verbose:
-        print(f"  [StageI] {len(cand)} seeds over {roll_bins} roll bins; chosen rolls={sorted(set(c[4] for c in chosen))}  {t1-t0:.1f}s")
+        src_note = " (reused)" if loaded_s1 else ""
+        print(f"  [StageI{src_note}] {len(cand)} seeds over {roll_bins} roll bins; chosen rolls={sorted(set(c[4] for c in chosen))}  {t_global_s:.1f}s")
 
     # Stage II+III per seed (distance sweep inside LocalBeam, coarse + fine), observation per roll
     results = []
@@ -507,7 +553,7 @@ def run_method(mesh, mesh_r: float, obs: VirtualObs, device, out_dir: Path, *, r
         run_dir = out_dir / f"seed_{i:02d}"
         run_dir.mkdir(parents=True, exist_ok=True)
         prev = {k: os.environ.get(k, "") for k in ("VAL_LOCAL_BEAM_STEP_FRAC", "VAL_LOCAL_BEAM_LEVELS", "VAL_LOCAL_BEAM_WIDTH")}
-        os.environ["VAL_LOCAL_BEAM_STEP_FRAC"], os.environ["VAL_LOCAL_BEAM_LEVELS"], os.environ["VAL_LOCAL_BEAM_WIDTH"] = "0.08", "8", "24"
+        os.environ["VAL_LOCAL_BEAM_STEP_FRAC"], os.environ["VAL_LOCAL_BEAM_LEVELS"], os.environ["VAL_LOCAL_BEAM_WIDTH"] = "0.08", "8", COARSE_BEAM_WIDTH
         c_d, c_e, c_a, c_l = exp.local_beam_search_on_sphere(
             mesh=mesh, silhouette_renderer=sil_r, rasterizer=rast, phong_renderer=None,
             image_ref_silhouette=mt, ref_depth=dt, ref_normals=nt, image_ref_rgb=None, at_xyz=at,
@@ -537,7 +583,7 @@ def run_method(mesh, mesh_r: float, obs: VirtualObs, device, out_dir: Path, *, r
     exp.SIL_SCENE_DEPTH = None
     return {
         "dist": best_d, "elev": best_e, "azim": best_a, "psi": best_psi, "loss": best_l,
-        "t_global_s": t1 - t0, "t_local_s": t2 - t1, "t_roll_s": t3 - t2, "t_total_s": t3 - t0,
+        "t_global_s": t_global_s, "t_local_s": t2 - t1, "t_roll_s": t3 - t2, "t_total_s": t_global_s + (t3 - t1),
         "n_seeds": len(chosen), "roll_bins": roll_bins, "R_v": obs_f.R_v, "centre_uv": getattr(obs_f, "centre_uv", None),
         "candidates": candidates,
     }
@@ -681,7 +727,7 @@ def run_from_init(mesh, mesh_r: float, obs: VirtualObs, device, out_dir: Path, R
     run_dir.mkdir(parents=True, exist_ok=True)
     l0 = float(exp._evaluate_pose_loss_no_grad(mesh, sil_r, rast, mt, dt, nt, at, sd, se, sa, device)["loss_total"])
     prev = {k: os.environ.get(k, "") for k in ("VAL_LOCAL_BEAM_STEP_FRAC", "VAL_LOCAL_BEAM_LEVELS", "VAL_LOCAL_BEAM_WIDTH")}
-    os.environ["VAL_LOCAL_BEAM_STEP_FRAC"], os.environ["VAL_LOCAL_BEAM_LEVELS"], os.environ["VAL_LOCAL_BEAM_WIDTH"] = "0.08", "8", "24"
+    os.environ["VAL_LOCAL_BEAM_STEP_FRAC"], os.environ["VAL_LOCAL_BEAM_LEVELS"], os.environ["VAL_LOCAL_BEAM_WIDTH"] = "0.08", "8", COARSE_BEAM_WIDTH
     c_d, c_e, c_a, c_l = exp.local_beam_search_on_sphere(
         mesh=mesh, silhouette_renderer=sil_r, rasterizer=rast, phong_renderer=None,
         image_ref_silhouette=mt, ref_depth=dt, ref_normals=nt, image_ref_rgb=None, at_xyz=at,
@@ -816,6 +862,19 @@ def main() -> int:
                     help="use the exported observation.npz/protocol.json packages in --out instead of the raw BOP test folders")
     ap.add_argument("--budget", default="full", choices=["full", "1/8"],
                     help="1/8: proposal budget M*S and beam budget K*B*L divided by eight (results file gets a _fast suffix)")
+    ap.add_argument("--high-elev-weights", action="store_true",
+                    help="archived runs of the paper: on beam levels whose candidates have a mean elevation of at least 45 deg (object "
+                         "frame), raise the depth and normal weights by 2.5 and 1.5; off by default (same weights for every candidate)")
+    ap.add_argument("--no-frame-seed", action="store_true",
+                    help="archived runs of the paper: the proposals of stage I are drawn from the unseeded default generator, so "
+                         "every run draws other proposals; by default the generators are seeded per frame (--seed and the frame tag)")
+    ap.add_argument("--beam-width", type=int, default=0,
+                    help="control: width of the coarse and fine beams of stage III (1: width-one walk from every seed; results file "
+                         "gets a _w<N> suffix); 0: default widths")
+    ap.add_argument("--best-seed-only", action="store_true",
+                    help="control: refine only the single lowest-loss seed of stage I (beam_seeds=1; results file gets a _k1 suffix)")
+    ap.add_argument("--reuse-stage1", action="store_true",
+                    help="control: reuse the cached stage-I proposal candidates of the seeded run on each frame")
     ap.add_argument("--shard", default="", help="i/n: run every n-th frame starting at i (results file gets a _shard<i>of<n> suffix)")
     ap.add_argument("--exclude-from", default="",
                     help="exported root whose frames are excluded from the selection (draws a disjoint second sample)")
@@ -857,12 +916,20 @@ def main() -> int:
     print(f"[{ds}] {len(frames)} frames, objects={objects}, rot bins={bins}")
 
     PIPE_ENV["VAL_LOSS_SCALE"] = str(args.loss_scale)
+    PIPE_ENV["VAL_LOCAL_BEAM_HIGH_ELEV_AUX"] = "1" if args.high_elev_weights else "0"
     if args.budget == "1/8":
         # same reduction as the synthetic ours_v10_fast: M/2 shells x S/4 directions (proposals / 8), K/2 seeds, B/2 x L/2 (beam / 8)
         PIPE_ENV.update({"VAL_RAND_RADIUS_STEPS": "12", "VAL_RAND_SAMPLES_PER_RADIUS": "128", "VAL_RAND_TOPK": "8", "VAL_TOPK": "8",
                          "VAL_LOCAL_BEAM_WIDTH": "24", "VAL_LOCAL_BEAM_LEVELS": "16"})
         args.out_suffix = f"_fast{args.out_suffix}"
-    global OCCLUSION_AWARE, OCC_MARGIN_R, OCC_MESH_R_MM
+    global OCCLUSION_AWARE, OCC_MARGIN_R, OCC_MESH_R_MM, COARSE_BEAM_WIDTH
+    if args.best_seed_only:
+        args.beam_seeds = 1
+        args.out_suffix = f"{args.out_suffix}_k1"
+    if args.beam_width > 0:
+        PIPE_ENV["VAL_LOCAL_BEAM_WIDTH"] = str(args.beam_width)
+        COARSE_BEAM_WIDTH = str(args.beam_width)
+        args.out_suffix = f"{args.out_suffix}_w{args.beam_width}"
     OCCLUSION_AWARE = bool(args.occlusion_aware)
     OCC_MARGIN_R = float(args.occ_margin)
     results_path = out_root / (f"results{args.out_suffix}.jsonl" if args.init_from == "none" else f"results_init_{args.init_from}{args.out_suffix}.jsonl")
@@ -993,9 +1060,12 @@ def main() -> int:
                             init_list.append((f"a{ai}_{int(deg)}", Rf, R0v @ centre + t0v, err))
             for init in init_list:
                 t_start = time.time()
+                if not args.no_frame_seed:
+                    seed_frame(tag, args.seed)
                 if init is None:
                     res = run_method(mesh_c, mesh_r, obs, device, fdir, roll_bins=args.roll_bins, beam_seeds=args.beam_seeds,
-                                     fr=fr, lateral=not args.no_lateral)
+                                     fr=fr, lateral=not args.no_lateral, reuse_stage1=args.reuse_stage1,
+                                     frame_seeded=not args.no_frame_seed)
                     method_name, bin_name, init_err = "ours_v10", "none", None
                 else:
                     bin_name, R0b, t0b, init_err = init
@@ -1014,7 +1084,7 @@ def main() -> int:
                         mc = compute_metrics(Rc, tc, R_gt, t_gt_c, fr.K, pts - centre, info, syms)
                         cand_err.append({"loss": c["loss"], "e_R_deg": mc["e_R_deg"], "e_t_mm": mc["e_t_mm"]})
                 rec = {"dataset": ds, "scene_id": scene_id, "im_id": im_id, "obj_id": obj_id, "tag": tag, "method": method_name,
-                       "bin": bin_name, "init_rot_err_deg_this": init_err, "loss_scale": str(args.loss_scale), "lateral": not args.no_lateral, "occlusion_aware": bool(args.occlusion_aware),
+                       "bin": bin_name, "init_rot_err_deg_this": init_err, "loss_scale": str(args.loss_scale), "lateral": not args.no_lateral, "occlusion_aware": bool(args.occlusion_aware), "frame_seeded": not args.no_frame_seed,
                    "front_frac": getattr(obs, "front_frac", None),
                        "centre_uv": [float(x) for x in res.pop("centre_uv")] if res.get("centre_uv") is not None else None,
                        "candidates": cand_err,

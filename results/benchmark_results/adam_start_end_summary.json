@@ -1,0 +1,22 @@
+{
+ "rand_restart_adam": {
+  "n": 350,
+  "start_ok": 137,
+  "end_ok": 89,
+  "lost": 56,
+  "gained": 8,
+  "from_first_iterate": 150
+ },
+ "grid_adam": {
+  "n": 350,
+  "start_ok": 70,
+  "end_ok": 41,
+  "lost": 36,
+  "gained": 7,
+  "from_first_iterate": 150
+ },
+ "rand_topk_only": {
+  "n": 350,
+  "end_ok": 137
+ }
+}

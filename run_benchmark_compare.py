@@ -116,6 +116,136 @@ METHODS: dict[str, dict[str, str]] = {
         "VAL_LOCAL_BEAM_WIDTH": "24",
         "VAL_LOCAL_BEAM_LEVELS": "16",
     },
+    # Auxiliary terms of the archived full-budget synthetic runs (Tables 1-2 of the paper): an appearance
+    # term in the order of the stage-I seeds, and, on beam levels whose candidates have a mean elevation
+    # of at least 45 deg, depth/normal weights raised by 2.5/1.5 plus an appearance term. Both are off by
+    # default; the paired control below runs the reduced budget with and without them on the same views.
+    "ours_v10_aux": {
+        "VAL_RUN_PROFILE": "v10",
+        "VAL_SEARCH_ENABLE": "0",
+        "VAL_BASELINE_PIPELINE": "",
+        "VAL_SIL_RENDER_MODE": "nvdiffrast_aa",
+        "VAL_GLOBAL_RGB_RERANK": "1",
+        "VAL_LOCAL_BEAM_HIGH_ELEV_AUX": "1",
+    },
+    # Full-budget controls (M=40 shells x S=1024 directions, K=16 seeds, B=48 x L=32; both auxiliary terms off):
+    # clean default, width-one walk (w1), single lowest-loss seed + beam (k1), single lowest-loss seed + walk (k1w1).
+    "ours_v10_clean": {
+        "VAL_RUN_PROFILE": "v10",
+        "VAL_SEARCH_ENABLE": "0",
+        "VAL_BASELINE_PIPELINE": "",
+        "VAL_SIL_RENDER_MODE": "nvdiffrast_aa",
+        "VAL_GLOBAL_RGB_RERANK": "0",
+        "VAL_LOCAL_BEAM_HIGH_ELEV_AUX": "0",
+    },
+    "ours_v10_w1": {
+        "VAL_RUN_PROFILE": "v10",
+        "VAL_SEARCH_ENABLE": "0",
+        "VAL_BASELINE_PIPELINE": "",
+        "VAL_SIL_RENDER_MODE": "nvdiffrast_aa",
+        "VAL_LOCAL_BEAM_WIDTH": "1",
+        "VAL_COARSE_BEAM_WIDTH": "1",
+        "VAL_GLOBAL_RGB_RERANK": "0",
+        "VAL_LOCAL_BEAM_HIGH_ELEV_AUX": "0",
+    },
+    "ours_v10_k1": {
+        "VAL_RUN_PROFILE": "v10",
+        "VAL_SEARCH_ENABLE": "0",
+        "VAL_BASELINE_PIPELINE": "",
+        "VAL_SIL_RENDER_MODE": "nvdiffrast_aa",
+        "VAL_GLOBAL_RGB_RERANK": "0",
+        "VAL_LOCAL_BEAM_HIGH_ELEV_AUX": "0",
+        "VAL_LOCAL_BEST_SEED_ONLY": "1",
+    },
+    "ours_v10_k1w1": {
+        "VAL_RUN_PROFILE": "v10",
+        "VAL_SEARCH_ENABLE": "0",
+        "VAL_BASELINE_PIPELINE": "",
+        "VAL_SIL_RENDER_MODE": "nvdiffrast_aa",
+        "VAL_LOCAL_BEAM_WIDTH": "1",
+        "VAL_COARSE_BEAM_WIDTH": "1",
+        "VAL_GLOBAL_RGB_RERANK": "0",
+        "VAL_LOCAL_BEAM_HIGH_ELEV_AUX": "0",
+        "VAL_LOCAL_BEST_SEED_ONLY": "1",
+    },
+    "ours_v10_fast_aux": {
+        "VAL_RUN_PROFILE": "v10",
+        "VAL_SEARCH_ENABLE": "0",
+        "VAL_BASELINE_PIPELINE": "",
+        "VAL_SIL_RENDER_MODE": "nvdiffrast_aa",
+        "VAL_RAND_RADIUS_STEPS": "20",
+        "VAL_RAND_SAMPLES_PER_RADIUS": "256",
+        "VAL_RAND_TOPK": "8",
+        "VAL_TOPK": "8",
+        "VAL_LOCAL_BEAM_WIDTH": "24",
+        "VAL_LOCAL_BEAM_LEVELS": "16",
+        "VAL_GLOBAL_RGB_RERANK": "1",
+        "VAL_LOCAL_BEAM_HIGH_ELEV_AUX": "1",
+    },
+    "ours_v10_fast_clean": {
+        "VAL_RUN_PROFILE": "v10",
+        "VAL_SEARCH_ENABLE": "0",
+        "VAL_BASELINE_PIPELINE": "",
+        "VAL_SIL_RENDER_MODE": "nvdiffrast_aa",
+        "VAL_RAND_RADIUS_STEPS": "20",
+        "VAL_RAND_SAMPLES_PER_RADIUS": "256",
+        "VAL_RAND_TOPK": "8",
+        "VAL_TOPK": "8",
+        "VAL_LOCAL_BEAM_WIDTH": "24",
+        "VAL_LOCAL_BEAM_LEVELS": "16",
+        "VAL_GLOBAL_RGB_RERANK": "0",
+        "VAL_LOCAL_BEAM_HIGH_ELEV_AUX": "0",
+    },
+    # Beam-width control at the reduced budget: a width-one walk (coarse and fine pass) with the proposals, the
+    # distance alignment and the selection of ours_v10_fast_clean unchanged.
+    "ours_v10_fast_w1": {
+        "VAL_RUN_PROFILE": "v10",
+        "VAL_SEARCH_ENABLE": "0",
+        "VAL_BASELINE_PIPELINE": "",
+        "VAL_SIL_RENDER_MODE": "nvdiffrast_aa",
+        "VAL_RAND_RADIUS_STEPS": "20",
+        "VAL_RAND_SAMPLES_PER_RADIUS": "256",
+        "VAL_RAND_TOPK": "8",
+        "VAL_TOPK": "8",
+        "VAL_LOCAL_BEAM_WIDTH": "1",
+        "VAL_COARSE_BEAM_WIDTH": "1",
+        "VAL_LOCAL_BEAM_LEVELS": "16",
+        "VAL_GLOBAL_RGB_RERANK": "0",
+        "VAL_LOCAL_BEAM_HIGH_ELEV_AUX": "0",
+    },
+    # Hypothesis-retention control at the reduced budget: only the lowest-loss seed is refined (K seeds are still
+    # drawn), with the default beam (k1) or a width-one walk (k1w1).
+    "ours_v10_fast_k1": {
+        "VAL_RUN_PROFILE": "v10",
+        "VAL_SEARCH_ENABLE": "0",
+        "VAL_BASELINE_PIPELINE": "",
+        "VAL_SIL_RENDER_MODE": "nvdiffrast_aa",
+        "VAL_RAND_RADIUS_STEPS": "20",
+        "VAL_RAND_SAMPLES_PER_RADIUS": "256",
+        "VAL_RAND_TOPK": "8",
+        "VAL_TOPK": "8",
+        "VAL_LOCAL_BEAM_WIDTH": "24",
+        "VAL_LOCAL_BEAM_LEVELS": "16",
+        "VAL_GLOBAL_RGB_RERANK": "0",
+        "VAL_LOCAL_BEAM_HIGH_ELEV_AUX": "0",
+        "VAL_LOCAL_BEST_SEED_ONLY": "1",
+    },
+    "ours_v10_fast_k1w1": {
+        "VAL_RUN_PROFILE": "v10",
+        "VAL_SEARCH_ENABLE": "0",
+        "VAL_BASELINE_PIPELINE": "",
+        "VAL_SIL_RENDER_MODE": "nvdiffrast_aa",
+        "VAL_RAND_RADIUS_STEPS": "20",
+        "VAL_RAND_SAMPLES_PER_RADIUS": "256",
+        "VAL_RAND_TOPK": "8",
+        "VAL_TOPK": "8",
+        "VAL_LOCAL_BEAM_WIDTH": "1",
+        "VAL_COARSE_BEAM_WIDTH": "1",
+        "VAL_LOCAL_BEAM_LEVELS": "16",
+        "VAL_GLOBAL_RGB_RERANK": "0",
+        "VAL_LOCAL_BEAM_HIGH_ELEV_AUX": "0",
+        "VAL_LOCAL_BEST_SEED_ONLY": "1",
+    },
     # --- nvdiffrast DR baselines (same backend, different silhouette treatment) ---
     "adam_dr": {
         **_DR_ADAM,
@@ -431,6 +561,7 @@ def run_method(
     skip_existing: bool = False,
     force: bool = False,
     max_views: int = 0,
+    tags: list[str] | None = None,
 ) -> int:
     if dataset not in DATASETS:
         print(f"[Error] unknown dataset: {dataset}")
@@ -488,6 +619,12 @@ def run_method(
         if done and not pending:
             print(f"[Skip] {dataset}/{method}: all {num_gt} GT views already finished")
             return 0
+        if tags:
+            # run exactly these views (those not finished yet), e.g. the views on which another variant fails
+            pending = [t for t in tags if t not in done]
+            if not pending:
+                print(f"[Skip] {dataset}/{method}: the requested views are already finished")
+                return 0
         if max_views and max_views > 0:
             # process only the first K views of the (seeded, deterministic) GT sequence now; later
             # invocations resume with the remaining ones so that N=100 runs can be built up in passes
@@ -495,7 +632,7 @@ def run_method(
             if not pending:
                 print(f"[Skip] {dataset}/{method}: first {max_views} views already finished")
                 return 0
-        if done or (max_views and max_views > 0):
+        if done or tags or (max_views and max_views > 0):
             resume_tags = pending
             env["VAL_GT_TAGS"] = ",".join(resume_tags)
             if _gt_cache_complete(out_dir, num_gt):
@@ -561,6 +698,7 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="Re-run even when results exist")
     ap.add_argument("--record", action="store_true", help="Append results to benchmark_results/master.jsonl")
     ap.add_argument("--max-views", type=int, default=0, help="Run at most this many not-yet-finished views now (resumable passes)")
+    ap.add_argument("--tags", default="", help="Comma-separated view tags (gt_05,gt_37): run exactly these views if not finished yet")
     ap.add_argument("--list-methods", action="store_true")
     args = ap.parse_args()
 
@@ -613,6 +751,7 @@ def main() -> int:
                 skip_existing=args.skip_existing,
                 force=args.force,
                 max_views=args.max_views,
+                tags=[t.strip() for t in args.tags.split(",") if t.strip()] or None,
             )
     if not args.dry_run:
         if active_path.parent.exists():

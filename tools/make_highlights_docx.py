@@ -9,8 +9,8 @@ MAN = Path(__file__).resolve().parents[1] / "manuscript" / "computational_visual
 TITLE = "Known Geometry Camera Pose Refinement via Progressive Cue Fusion"
 BULLETS = [
     "Progressive cue fusion: geometry proposes, depth sets the shell, RGB only selects.",
-    "Metric depth hint plus beam search recover far-off camera poses without training.",
-    "Theory bounds spurious minima and proves beam width protects the correct basin.",
+    "Metric depth hint and multi-seed search recover far-off camera poses, no training.",
+    "Theory bounds spurious minima; controls show the retained seeds protect the basin.",
     "Sub-degree median error on five meshes, more reliable than WAPR on the same views.",
     "As a front end it lifts six real-data refiners, GoTrack and MegaPose included.",
 ]

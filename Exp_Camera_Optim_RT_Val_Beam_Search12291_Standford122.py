@@ -98,7 +98,9 @@ CODE_RUN_PARAMS = {
     "VAL_RAND_ADD_GRID_ANCHORS": "1",
     "VAL_RAND_ANCHOR_ELEVS": "5,15,30,45,60,75,85",
     "VAL_RAND_ANCHOR_AZIMS": "-180,-135,-90,-45,0,45,90,135,180",
-    "VAL_GLOBAL_RGB_RERANK": "1",
+    # Stage I orders the selected seeds by geometry only (default 0). Set to 1 to re-order them by a
+    # score with an appearance term, as in the archived full-budget synthetic runs (ours_v10_aux).
+    "VAL_GLOBAL_RGB_RERANK": "0",
     "VAL_GLOBAL_RGB_RERANK_W": "4.0",
     # Valid-ratio penalty: penalises candidates with almost no GT/rendered overlap.
     # Key fix: prevents wrong viewpoints from winning because of tiny valid regions.
@@ -136,6 +138,11 @@ CODE_RUN_PARAMS = {
     "VAL_REF_DIST_DEPTH_SCALE": "0.92",
     # LocalBeam 内部 RGB 纹理 loss 权重（针对高俯仰）
     "VAL_LOCAL_BEAM_RGB_WEIGHT": "8.0",
+    # Stage III scores every beam candidate with the same geometry weights (default 0). Set to 1 to
+    # raise the depth/normal weights and add the appearance term above on beam levels whose
+    # candidates have a mean elevation of at least 45 deg, as in the archived full-budget synthetic
+    # runs (ours_v10_aux).
+    "VAL_LOCAL_BEAM_HIGH_ELEV_AUX": "0",
     # Multi-scale coarse-to-fine beam: large-step pre-pass before fine search.
     "VAL_COARSE_BEAM_STEP_FRAC": "0.08",
     "VAL_COARSE_BEAM_LEVELS": "8",
@@ -2841,7 +2848,7 @@ def local_beam_search_on_sphere(
             
             # 高俯仰种子早期临时提高 depth/normal 权重
             high_elev_boost = False
-            if len(cand_elev) > 0:
+            if len(cand_elev) > 0 and int(os.environ.get("VAL_LOCAL_BEAM_HIGH_ELEV_AUX", "0")) != 0:
                 avg_elev = np.mean(cand_elev)
                 if avg_elev >= 45.0:  # 高俯仰阈值
                     high_elev_boost = True
@@ -5144,7 +5151,7 @@ def global_random_sampling_1024(
         phong_renderer is not None
         and image_ref_rgb is not None
         and len(selected_seed_indices) > 1
-        and int(os.environ.get("VAL_GLOBAL_RGB_RERANK", "1")) != 0
+        and int(os.environ.get("VAL_GLOBAL_RGB_RERANK", "0")) != 0
     ):
         try:
             w_rgb_global = _rgb_weight_for_mesh_radius(
@@ -10575,6 +10582,10 @@ def main():
             # Stage-2: Local multi-start on TopK seeds, pick the best local result.
             if len(seeds0) <= 0:
                 seeds0 = [(float(init_dist), float(init_elev), float(init_azim), float("inf"))]
+            # Control (off by default): only the lowest-loss seed enters stages II-III, so that a single hypothesis is
+            # refined while the proposals and the seed list stay those of the default run.
+            if int(os.environ.get("VAL_LOCAL_BEST_SEED_ONLY", "0")) != 0 and len(seeds0) > 1:
+                seeds0 = [min(seeds0, key=lambda s: float(s[3]))]
             _t_l0 = _stage_now()
 
             _skip_local = int(os.environ.get("VAL_BASELINE_SKIP_LOCAL", "0")) != 0

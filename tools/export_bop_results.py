@@ -114,7 +114,8 @@ def load_all(ds: str) -> dict[str, list[dict]]:
                      ("ours_gt", "baseline_gotrack_from_ours.jsonl"), ("flip180_ours", "results_init_flip180.jsonl"),
                      ("flip90_ours", "results_init_flip90.jsonl"), ("msf_wapr", "baseline_wapr_from_msf.jsonl"),
                      ("msf_gt", "baseline_gotrack_from_msf.jsonl"), ("msf_icp", "results_msf_icp.jsonl"),
-                     ("ours_icp", "results_ours_icp.jsonl"), ("msf_s384", "results_init_msf_s384.jsonl")):
+                     ("ours_icp", "results_ours_icp.jsonl"), ("msf_s384", "results_init_msf_s384.jsonl"),
+                     ("msf_fit", "results_msf_fit_sel.jsonl")):
         recs = read_jsonl(d / fn)
         # keep the last record per (tag, bin)
         uniq: dict[tuple, dict] = {}
@@ -157,6 +158,13 @@ def load_all(ds: str) -> dict[str, list[dict]]:
             rec["n_reseed"] = len(extra)
             msf.append(rec)
         groups["ours_msf"] = msf
+    # per-candidate ICP with fitness selection (tools/icp_fitness_select.py): the records carry no time; the frame time is that of
+    # the select-then-polish row with one ICP per candidate instead of one per frame
+    icp_t = {r["tag"]: r for r in groups.get("msf_icp", [])}
+    for r in groups.get("msf_fit", []):
+        base = icp_t.get(r.get("tag"))
+        if base is not None and r.get("t_total_s") is None and base.get("t_total_s") is not None:
+            r["t_total_s"] = float(base["t_total_s"]) + (int(r.get("n_candidates") or 1) - 1) * float(base.get("t_icp_s") or 0.0)
     return groups
 
 
@@ -329,8 +337,8 @@ def bop_table_compact(all_ds: dict[str, dict[str, list[dict]]]) -> str:
              "\\caption{Full 6-DoF object pose on real BOP frames (8 objects per dataset, 104 frames): SR@$10^\\circ$ in \\% under the "
              "official BOP object symmetries (raw value in brackets for the initialisation-free rows). + FM hypotheses: lowest final "
              "geometric loss among our estimate and four feed-forward initialisations refined by stages II--IV; + re-seeded: also the "
-             "selection rotated about the principal axes of the mesh; + depth ICP: of the masked depth, from the selection. "
-             "Refiners start from the same $T_0$ in four rotation-error bins. "
+             "selection rotated about the principal axes of the mesh; + depth ICP: of the masked depth, from the selection; "
+             "+ best depth fit: the same ICP on every hypothesis, keeping the pose that fits the observed points best. "
              "s: median seconds per frame (shared RTX~5090; SCFlow2 on an RTX~2080\\,Ti; for the combined row, the refinement added to "
              "the search). All metrics in Supplementary Table~S7, the second sample in Table~S13.}",
              "\\label{tab:bop}", "\\normalsize", "\\setlength{\\tabcolsep}{4pt}",
@@ -369,6 +377,7 @@ def bop_table_compact(all_ds: dict[str, dict[str, list[dict]]]) -> str:
     one("\\quad + FM hypotheses", "ours_ms")
     one("\\quad + FM and re-seeded hypotheses", "ours_msf")
     one("\\quad\\quad + depth ICP polish", "msf_icp")
+    one("\\quad\\quad + ICP on every hypothesis, best depth fit", "msf_fit")
     one("Proposed $\\rightarrow$ WAPR refine", "ours_wapr")
     one("WAPR, 12 hypotheses", "wapr_full")
     one("FoundationPose", "fp_full")

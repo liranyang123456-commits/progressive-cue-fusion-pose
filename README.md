@@ -39,6 +39,13 @@ python tools/derive_geom_only.py --run-root benchmark_runs/bunny_100gt   # Geom-
 python run_benchmark_compare.py --dataset bunny --num-gt 100 --methods ours_v10_fast --max-views 30   # 1/8 budget (M=20, S=256, K=8, B=24, L=16); also dragon
 python tools/export_revision_results.py                   # tables/*.tex, results_macros.tex, binned-SR figure
 python tools/make_qualitative_figures.py
+# reduced-budget controls of the revision (auxiliary terms, retained seeds, beam width; REPRODUCTION_LOG.md, 11-11)
+python tools/derive_stage1_only.py --all                                                          # Stage I only: lowest-loss proposal of ours_v10
+python run_benchmark_compare.py --dataset bunny --num-gt 100 --methods ours_v10_fast_clean         # 1/8 budget, released defaults; all five meshes
+python run_benchmark_compare.py --dataset bunny --num-gt 100 --methods ours_v10_fast_aux --tags gt_00,gt_01   # the same with the archived auxiliary terms
+python tools/derive_stage1_only.py --run-root benchmark_runs/bunny_100gt --src ours_v10_fast_clean --dst ours_v10_fast_stage1
+python run_benchmark_compare.py --dataset bunny --num-gt 100 --methods ours_v10_fast_w1,ours_v10_fast_k1,ours_v10_fast_k1w1 --tags gt_03,gt_08   # width-one walk; lowest-loss seed only
+python tools/analyze_aux_control.py; python tools/analyze_adam_start_end.py
 python plot_sampling_space.py                             # Supplementary Fig. S1: the shell layout on the dragon (default range [0.4, 6.0] r)
 python tools/test_no_gt_leak.py --dataset bunny --methods ours_v10,grid_adam,rand_restart_adam --num-gt 3 --legacy
 # recent methods on exactly the same observations (640x480 RGB, metric depth, silhouette; mesh scaled to r = 100 mm)
@@ -100,6 +107,16 @@ bash tools/wsl/run_baselines.sh
 python baselines/run_foundationpose_bop.py --root bop6dof_results/lmo --mode refine --bins 60-90,90-180 --iters 20
 python bop_full6dof_eval.py --dataset lmo --objects 1,5,6,8,9,10,11,12 --frames-per-object 5 --seed 2027 --exclude-from bop6dof_results/lmo --out bop6dof_results_second/lmo   # LM, T-LESS: 4 frames per object
 python bop_full6dof_eval.py --dataset lmo --from-export --out bop6dof_results_fast/lmo --budget 1/8
+# reduced-budget controls on every third frame: released default against the archived re-weighting (same seeded proposals)
+python bop_full6dof_eval.py --dataset lmo --from-export --out bop6dof_results_fast_seeded/lmo --budget 1/8 --frame-stride 3
+python bop_full6dof_eval.py --dataset lmo --from-export --out bop6dof_results_fast_seeded_rw/lmo --budget 1/8 --frame-stride 3 --high-elev-weights
+python bop_full6dof_eval.py --dataset lmo --from-export --out bop6dof_results_fast_clean/lmo --budget 1/8 --frame-stride 3 --no-frame-seed   # another proposal draw
+python tools/analyze_bop_reweight_control.py
+# full-budget 2x2 controls (retained seeds K vs 1, beam width B vs 1) across all 208 BOP frames and the 31 synthetic target views
+python bop_full6dof_eval.py --dataset lmo --from-export --out bop6dof_results/lmo --beam-width 1 --reuse-stage1
+python bop_full6dof_eval.py --dataset lmo --from-export --out bop6dof_results/lmo --best-seed-only --reuse-stage1
+python bop_full6dof_eval.py --dataset lmo --from-export --out bop6dof_results/lmo --best-seed-only --beam-width 1 --reuse-stage1
+python tools/analyze_full_controls.py
 python tools/analyze_replication.py; python tools/analyze_wide_bin.py; python tools/analyze_fp_iterations.py
 python tools/analyze_fast.py; python tools/analyze_residual_failures.py; python tools/analyze_failure_modes.py
 ```
@@ -110,6 +127,15 @@ python tools/analyze_fast.py; python tools/analyze_residual_failures.py; python 
   ground-truth pose, and `tools/test_no_gt_leak.py` verifies bit-identical outputs under GT-label permutation.
 * The depth channel is metric view depth; the distance hint is `median depth + kappa * r` with `kappa` calibrated
   from 32 random renders of the mesh (no observation involved).
+* Released defaults and archived runs. The synthetic full-budget tables (`ours_v10`) come from archived runs that
+  contained two auxiliary terms not part of the method as described (an appearance term in the order of the stage-I
+  seeds; on beam levels with a mean candidate elevation >= 45 deg, raised depth / normal weights and, on rendered
+  observations, an appearance term); `--methods ours_v10_aux` restores them, while the released default omits them and
+  leaves synthetic outcomes unchanged (`REPRODUCTION_LOG.md`, 11-11, and Supplementary Section S13). All BOP runs
+  (both 104-frame samples, the 1/8-budget run and all downstream evaluations) use the released default: uniform beam
+  weights and stage-I proposals seeded per frame (`--high-elev-weights` and `--no-frame-seed` restore an earlier
+  variant). Full- and reduced-budget 2x2 controls (`tools/analyze_aux_control.py`, `tools/analyze_full_controls.py`)
+  isolate retained seeds vs beam width across both domains.
 * Runtimes in the tables were measured on a shared GPU; `stage_timing.json` holds CUDA-synchronised per-stage times.
 
 See `REPRODUCTION_LOG.md` for the exact command history and software versions used for the submitted numbers.

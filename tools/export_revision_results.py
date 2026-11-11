@@ -40,7 +40,7 @@ MAN = ROOT / "manuscript" / "computational_visual_media"
 TABLES = MAN / "tables"
 FIGS = MAN / "figures" / "exp"
 RNG = np.random.default_rng(12291)
-LATE_METHODS = {"foundationpose_full", "foundationpose_refine", "foundationpose_sanity"}
+LATE_METHODS = {"foundationpose_full", "foundationpose_refine", "foundationpose_sanity", "ours_v10_stage1"}
 LATE_SEED = 12292
 # tables of the supplementary material (placed with [!htbp]); the others are main-text tables
 SUPP_TABLES = {"tab_results_full.tex", "tab_new_meshes.tex", "tab_runtime.tex", "tab_transfer.tex", "tab_ablation_radius.tex", "tab_corr.tex"}
@@ -57,8 +57,9 @@ GROUPS = [
     ("Internal ablations", [
         ("ours_v10_geom", "Geom-only selection (no RGB)"),
         ("ours_v10_noda", "w/o distance alignment (w/o-DA)"),
-        ("greedy_bt_local", "Greedy-BT + local"),
-        ("rand_topk_only", "Rand-TopK only (no beam)"),
+        ("greedy_bt_local", "Greedy-BT + local (width-one walk)"),
+        ("rand_topk_only", "Rand-TopK only (best proposal)"),
+        ("ours_v10_stage1", "Stage I only (lowest-loss proposal, no beam)"),
     ]),
     ("Recent methods on the same observations", [
         ("wapr_full", "WAPR, 12 hypotheses"),
@@ -79,6 +80,30 @@ GROUPS = [
     ]),
 ]
 NAME = {m: n for _, lst in GROUPS for m, n in lst}
+# GROUPS fixes the order in which the rows are computed (the bootstrap stream depends on it and must not change);
+# DISPLAY fixes the order and the grouping in which they are printed. Greedy-BT and Rand-TopK were run with the
+# configuration of the DR baselines (s_img = 1, fixed 36 shells) and are shown with them; the internal ablations
+# share the proposals, the loss and the seeds of the proposed run.
+DISPLAY = [
+    ("Proposed", ["ours_v10"]),
+    ("Internal ablations", ["ours_v10_geom", "ours_v10_noda", "ours_v10_stage1"]),
+    ("Recent methods on the same observations", ["wapr_full", "wapr_refine", "foundationpose_full", "foundationpose_refine", "diffdope", "sdfr"]),
+    ("Proposal-level and DR baselines ($s_{\\mathrm{img}}{=}1$, fixed shells)", ["rand_topk_only", "greedy_bt_local", "grid_adam", "grid_adam_top16", "rand_restart_adam"]),
+    ("Weak DR baselines (single start)", ["adam_dr", "hybrid_dr"]),
+]
+assert sorted(m for _, lst in DISPLAY for m in lst) == sorted(NAME), "DISPLAY and GROUPS must list the same methods"
+
+
+def emit(row_of: dict, n_cols: int, first_header: bool = False) -> list[str]:
+    """Rows computed in GROUPS order, printed in DISPLAY order with one italic header per non-empty group."""
+    out = []
+    for gname, lst in DISPLAY:
+        glines = [row_of[m] for m in lst if m in row_of]
+        if glines:
+            if gname != "Proposed" or first_header:
+                out.append(f"\\multicolumn{{{n_cols}}}{{@{{}}l}}{{\\textit{{{gname}}}}} \\\\")
+            out += glines
+    return out
 NAME.update({"ours_v10_fixedmr": "Fixed multi-radius (36 shells)", "ours_v10_1shell": "Single shell ($2r$)"})
 SHORT = {"ours_v10": "Proposed", "ours_v10_noda": "w/o-DA", "ours_v10_geom": "Geom-only", "greedy_bt_local": "Greedy-BT",
          "rand_topk_only": "Rand-TopK", "grid_adam": "Grid+Adam", "grid_adam_top16": "Grid+Adam-T16",
@@ -86,12 +111,14 @@ SHORT = {"ours_v10": "Proposed", "ours_v10_noda": "w/o-DA", "ours_v10_geom": "Ge
          "ours_v10_fixedmr": "Fixed-MR", "ours_v10_1shell": "1-shell",
          "wapr_full": "WAPR (12 hyp.)", "wapr_refine": "WAPR refine", "diffdope": "Diff-DOPE", "sdfr": "SDFR",
          "foundationpose_full": "FoundationPose", "foundationpose_refine": "FoundationPose refine",
-         "ours_v10_fast": "Proposed, 1/8 budget"}
-# near-duplicate baselines, and FoundationPose (added late, page limit), shown only in the complete table of the supplement
-MAIN_SKIP = {"grid_adam_top16", "hybrid_dr", "foundationpose_full", "foundationpose_refine"}
+         "ours_v10_fast": "Proposed, 1/8 budget", "ours_v10_stage1": "Stage I only"}
+# near-duplicate baselines and FoundationPose's refiner, shown only in the complete table of the supplement
+MAIN_SKIP = {"grid_adam_top16", "hybrid_dr", "foundationpose_refine"}
 # compact names for the 10 pt main table
 TAB1_NAME = {"ours_v10": "Proposed", "ours_v10_geom": "Geom-only (no RGB)", "ours_v10_noda": "w/o-DA", "greedy_bt_local": "Greedy-BT + local",
-             "rand_topk_only": "Rand-TopK (no beam)", "wapr_full": "WAPR, 12 hyp.", "wapr_refine": "WAPR refine$^{\\ast}$",
+             "rand_topk_only": "Rand-TopK (best proposal)", "ours_v10_stage1": "Stage I only (no beam)",
+             "wapr_full": "WAPR, 12 hyp.", "wapr_refine": "WAPR refine$^{\\ast}$",
+             "foundationpose_full": "FoundationPose, registration",
              "diffdope": "Diff-DOPE$^{\\ast}$", "sdfr": "SDFR$^{\\ast}$", "grid_adam": "Grid+Adam", "grid_adam_top16": "Grid+Adam-Top16",
              "rand_restart_adam": "RandRestart+Adam", "adam_dr": "Adam-DR", "hybrid_dr": "Hybrid-DR"}
 
@@ -203,8 +230,8 @@ def main_table(ds: str) -> str:
         "Method & $e_R$ [95\\% CI] & med.\\ $e_R$ & SR@5$^\\circ$ & SR@10$^\\circ$ & $e_t/r$ & $|\\Delta d|/r$ & wrong shell \\\\",
         "\\midrule",
     ]
+    row_of = {}
     for gname, lst in GROUPS:
-        glines = []
         for m, mname in lst:
             rows = load_rows(ds, n, m)
             tag = ""
@@ -219,16 +246,11 @@ def main_table(ds: str) -> str:
             s = summarize(rows, r_mesh)
             bold = m == "ours_v10"
             name = ("\\textbf{" + mname + "}" if bold else mname) + tag
-            glines.append(
+            row_of[m] = (
                 f"{name} & {f1(s['eR_mean'])} [{f1(s['eR_ci'][0])}, {f1(s['eR_ci'][1])}] & {f1(s['eR_median'])} & "
                 f"{pct(s['sr5'])} & {pct(s['sr10'])} & {f1(s['et_r_median'],3)} & {f1(s['dd_r_median'],3)} & {pct(s['wrong_shell'])} \\\\"
             )
-        if glines:
-            lines.append(f"\\multicolumn{{8}}{{@{{}}l}}{{\\textit{{{gname}}}}} \\\\")
-            lines += glines
-            lines.append("\\midrule")
-    if lines[-1] == "\\midrule":
-        lines.pop()
+    lines += emit(row_of, 8, first_header=True)
     lines += ["\\bottomrule", "\\end{tabular}", "\\end{table}"]
     return "\n".join(lines) + "\n"
 
@@ -253,12 +275,12 @@ def main_table_compact() -> str:
     """Main-text table at the journal's 10 pt: mean / median e_R, SR@10, distance errors; CIs and SR@5 are in tab_results_full."""
     lines = [
         "% Auto-generated by tools/export_revision_results.py",
-        "\\begin{table}[!t]", "\\centering",
+        "\\begin{table}[!tp]", "\\centering",
         "\\caption{Pose errors on the Stanford Bunny and Dragon ($N{=}100$ views each; strict no-ground-truth protocol, metric depth; "
         "every method receives the same rendered observation). $e_R$: geodesic rotation error (deg), mean and median; "
         "SR@$10^\\circ$: fraction with $e_R\\le10^\\circ$; $e_t/r$, $|\\Delta d|/r$: median camera-centre and distance errors in units of the "
         "bounding radius; wrong shell: fraction with $|\\Delta d|>0.25\\,d_{\\mathrm{gt}}$. $^{\\ast}$Started from the fixed initial camera of the "
-        "DR baselines. $^\\dagger$First 50 views. Bootstrap CIs, SR@$5^\\circ$, Grid+Adam-Top16 and Hybrid-DR: Supplementary Table~S9.}",
+        "DR baselines. $^\\dagger$First 50 views. Stage~I only: lowest-loss proposal of the proposed run. Bootstrap CIs, SR@$5^\\circ$, FoundationPose's refiner, Grid+Adam-Top16 and Hybrid-DR: Supplementary Table~S9.}",
         "\\label{tab:bunny100gt_main}\\label{tab:dragon100gt_main}",
         "\\normalsize", "\\setlength{\\tabcolsep}{3pt}",
         "\\begin{tabular}{@{}lcccccc@{}}", "\\toprule",
@@ -268,8 +290,8 @@ def main_table_compact() -> str:
         disp, n, _ = MESHES[ds]
         r_mesh = mesh_radius(ds, n)
         lines += ["\\midrule", f"\\multicolumn{{7}}{{@{{}}l}}{{\\textbf{{{disp}}} ($r{{=}}{r_mesh:.3g}$)}} \\\\"]
+        row_of = {}
         for gname, lst in GROUPS:
-            glines = []
             for m, _ in lst:
                 if m in MAIN_SKIP:
                     continue
@@ -279,12 +301,9 @@ def main_table_compact() -> str:
                 sm = summarize(rows, r_mesh)
                 name = TAB1_NAME.get(m, m)
                 name = ("\\textbf{" + name + "}" if m == "ours_v10" else name) + tag
-                glines.append(f"{name} & {f1(sm['eR_mean'])} & {f1(sm['eR_median'])} & {pct(sm['sr10'])} & "
-                              f"{f1(sm['et_r_median'],3)} & {f1(sm['dd_r_median'],3)} & {pct(sm['wrong_shell'])} \\\\")
-            if glines:
-                if gname != "Proposed":
-                    lines.append(f"\\multicolumn{{7}}{{@{{}}l}}{{\\textit{{{gname}}}}} \\\\")
-                lines += glines
+                row_of[m] = (f"{name} & {f1(sm['eR_mean'])} & {f1(sm['eR_median'])} & {pct(sm['sr10'])} & "
+                             f"{f1(sm['et_r_median'],3)} & {f1(sm['dd_r_median'],3)} & {pct(sm['wrong_shell'])} \\\\")
+        lines += emit(row_of, 7)
     lines += ["\\bottomrule", "\\end{tabular}", "\\end{table}"]
     return "\n".join(lines) + "\n"
 
@@ -299,7 +318,8 @@ def main_table_combined() -> str:
         "$e_R$: geodesic rotation error (deg) with bootstrap 95\\% CI of the mean; SR@$\\tau$: fraction with $e_R\\le\\tau^\\circ$; "
         "$e_t/r$ and $|\\Delta d|/r$: camera-centre and distance errors in units of the mesh bounding radius (medians); "
         "wrong shell: fraction with $|\\Delta d|>0.25\\,d_{\\mathrm{gt}}$. $^{\\ast}$From the fixed initial camera of the DR baselines. "
-        "Rows marked $\\dagger$ use the first $N'$ views of the same seeded sequence.}",
+        "Rows marked $\\dagger$ use the first $N'$ views of the same seeded sequence. Stage~I only: the lowest-loss proposal of the proposed run, "
+        "without any later stage.}",
         "\\label{tab:results_full}",
         "\\footnotesize", "\\setlength{\\tabcolsep}{3pt}",
         "\\begin{tabular}{@{}lccccccc@{}}", "\\toprule",
@@ -309,8 +329,8 @@ def main_table_combined() -> str:
         disp, n, _ = MESHES[ds]
         r_mesh = mesh_radius(ds, n)
         lines += ["\\midrule", f"\\multicolumn{{8}}{{@{{}}l}}{{\\textbf{{{disp}}} ($r{{=}}{r_mesh:.3g}$)}} \\\\"]
+        row_of = {}
         for gname, lst in GROUPS:
-            glines = []
             for m, mname in lst:
                 rows = load_rows(ds, n, m)
                 tag = ""
@@ -329,14 +349,11 @@ def main_table_combined() -> str:
                 sm = summarize(rows, r_mesh)
                 bold = m == "ours_v10"
                 name = ("\\textbf{" + mname + "}" if bold else mname) + tag
-                glines.append(
+                row_of[m] = (
                     f"{name} & {f1(sm['eR_mean'])} [{f1(sm['eR_ci'][0])}, {f1(sm['eR_ci'][1])}] & {f1(sm['eR_median'])} & "
                     f"{pct(sm['sr5'])} & {pct(sm['sr10'])} & {f1(sm['et_r_median'],3)} & {f1(sm['dd_r_median'],3)} & {pct(sm['wrong_shell'])} \\\\"
                 )
-            if glines:
-                if gname != "Proposed":
-                    lines.append(f"\\multicolumn{{8}}{{@{{}}l}}{{\\textit{{{gname}}}}} \\\\")
-                lines += glines
+        lines += emit(row_of, 8)
     lines += ["\\bottomrule", "\\end{tabular}", "\\end{table}"]
     return "\n".join(lines) + "\n"
 
@@ -353,7 +370,7 @@ def new_meshes_table() -> str:
              "& " + " & ".join(f"\\multicolumn{{3}}{{c}}{{{MESHES[d][0]}}}" for d in dss) + " \\\\",
              " ".join(f"\\cmidrule(lr){{{2+3*i}-{4+3*i}}}" for i in range(len(dss))),
              "Method & " + " & ".join("$e_R$ & SR@10 & $|\\Delta d|/r$" for _ in dss) + " \\\\", "\\midrule"]
-    any_row = False
+    row_of = {}
     for gname, lst in GROUPS:
         for m, mname in lst:
             cells = []
@@ -369,20 +386,19 @@ def new_meshes_table() -> str:
                     cells.append("-- & -- & --")
             if have:
                 name = "\\textbf{" + SHORT[m] + "}" if m == "ours_v10" else SHORT.get(m, m)
-                lines.append(f"{name} & " + " & ".join(cells) + " \\\\")
-                any_row = True
+                row_of[m] = f"{name} & " + " & ".join(cells) + " \\\\"
+    lines += [row_of[m] for _, lst in DISPLAY for m in lst if m in row_of]
     lines += ["\\bottomrule", "\\end{tabular}", "\\end{table}"]
-    return ("\n".join(lines) + "\n") if any_row else ""
+    return ("\n".join(lines) + "\n") if row_of else ""
 
 
 def cross_object_table() -> str:
-    methods = ["ours_v10", "ours_v10_geom", "wapr_full", "wapr_refine", "diffdope", "sdfr", "grid_adam", "rand_restart_adam", "adam_dr"]
+    methods = ["ours_v10", "ours_v10_geom", "wapr_full", "foundationpose_full", "wapr_refine", "diffdope", "sdfr", "grid_adam", "rand_restart_adam", "adam_dr"]
     dss = list(MESHES.keys())
     lines = ["% Auto-generated by tools/export_revision_results.py", "\\begin{table}[!t]", "\\centering",
              "\\caption{Cross-object summary: one configuration applied to five meshes spanning four orders of magnitude in bounding radius. "
              "Cells: mean $e_R$ (deg) / SR@$10^\\circ$ (\\%) over the $N$ views of Table~\\ref{tab:bunny100gt_main} and Supplementary Table~S1 "
-             "(Bunny, Dragon: $N{=}100$; other meshes: $N{=}50$); "
-             "a bracketed number gives $N$ where a run uses fewer views (first views of the same seeded sequence); runs with fewer than 10 views are not shown.}",
+             "(Bunny, Dragon: $N{=}100$; other meshes: $N{=}50$).}",
              "\\label{tab:cross_object}", "\\normalsize", "\\setlength{\\tabcolsep}{3pt}",
              "\\begin{tabular}{@{}l" + "c" * len(dss) + "@{}}", "\\toprule",
              "Method & " + " & ".join(MESHES[d][0] for d in dss) + " \\\\",
@@ -825,7 +841,8 @@ def macros(summary: dict, corr: dict) -> str:
                 L.append(m(f"Res{key}Time", f1(s["t_median"], 0)))
         for alt, suffix in (("grid_adam", "Grid"), ("rand_restart_adam", "RR"), ("adam_dr", "Adam"), ("ours_v10_noda", "NoDA"), ("ours_v10_geom", "Geom"), ("greedy_bt_local", "Greedy"), ("rand_topk_only", "TopK"),
                             ("wapr_full", "WaprFull"), ("wapr_refine", "WaprRef"), ("diffdope", "DiffDope"), ("sdfr", "Sdfr"), ("hybrid_dr", "Hybrid"),
-                            ("ours_v10_fast", "Fast"), ("foundationpose_full", "FpFull"), ("foundationpose_refine", "FpRef")):
+                            ("ours_v10_fast", "Fast"), ("foundationpose_full", "FpFull"), ("foundationpose_refine", "FpRef"),
+                            ("ours_v10_stage1", "StageOne")):
             s2 = summary.get(d, {}).get(alt, {})
             if s2:
                 L += [m(f"Res{key}{suffix}ER", f1(s2["eR_mean"])), m(f"Res{key}{suffix}SRten", f"{100*s2['sr10']:.0f}"), m(f"Res{key}{suffix}N", str(s2["n"])),
@@ -833,6 +850,13 @@ def macros(summary: dict, corr: dict) -> str:
                       m(f"Res{key}{suffix}ERmed", f1(s2["eR_median"]))]
                 if "t_median" in s2:
                     L.append(m(f"Res{key}{suffix}Time", f1(s2["t_median"], 1 if s2["t_median"] < 10 else 0)))
+    st_n = st_ok = 0
+    for d in MESHES:
+        rws = load_rows(d, MESHES[d][1], "ours_v10_stage1")
+        st_n += len(rws)
+        st_ok += sum(fl(row, "rot_err_deg") <= 10 for row in rws)
+    if st_n:
+        L += [m("ResPoolStageOneN", str(st_n)), m("ResPoolStageOneOk", str(st_ok)), m("ResPoolStageOneSRten", f"{100 * st_ok / st_n:.1f}")]
     for d, res in corr.items():
         key = d.capitalize()
         for name, v in res.items():
