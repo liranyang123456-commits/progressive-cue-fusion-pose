@@ -11,8 +11,8 @@ BULLETS = [
     "Progressive cue fusion: geometry proposes, depth sets the shell, RGB only selects.",
     "Metric depth hint and multi-seed search recover far-off camera poses, no training.",
     "Theory bounds spurious minima; controls show the retained seeds protect the basin.",
-    "Sub-degree median error on five meshes, more reliable than WAPR on the same views.",
-    "As a front end it lifts six real-data refiners, GoTrack and MegaPose included.",
+    "Sub-degree median error on five meshes, surpassing FoundationPose and WAPR offline.",
+    "Training-free front end and zero-shot selector lifting six real RGB-D pose refiners.",
 ]
 
 
